@@ -39,7 +39,9 @@ ENV USER=appuser \
 RUN groupadd --gid $GID $GROUP \
     && useradd --home-dir $(pwd) --no-create-home --shell /bin/sh --gid $GID --uid $UID $USER \
     && chown -R $UID:$GID . \
-    && chmod +x ./start.sh
+    && chmod +x ./start.sh \
+    && mkdir -p /gallery-dl \
+    && chown -R $UID:$GID /gallery-dl
 
 ENV CONTAINER_PORT=9080
 
