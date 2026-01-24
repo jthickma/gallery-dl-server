@@ -19,11 +19,30 @@ set_umask () {
   umask "$UMASK"
 }
 
+fix_download_dir_permissions () {
+  # Fix permissions on the download directory
+  # This must be called as root to properly set ownership on mounted volumes
+  local download_dir="${DOWNLOAD_DIR:-/gallery-dl}"
+  local dir_mode="${DOWNLOAD_DIR_MODE:-755}"
+  
+  # Ensure the download directory exists
+  mkdir -p "$download_dir" 2>/dev/null || true
+  
+  if [[ -d "$download_dir" ]]; then
+    # Set ownership of the download directory and any existing contents
+    chown -R "$UID:$GID" "$download_dir" 2>/dev/null || true
+    chmod -R "$dir_mode" "$download_dir" 2>/dev/null || true
+  fi
+}
+
 mod_ids () {
   groupmod --non-unique --gid "$GID" appgroup >/dev/null 2>&1
   usermod --non-unique --gid "$GID" --uid "$UID" appuser >/dev/null 2>&1
 
   chown -R "$UID:$GID" /usr/src/app >/dev/null 2>&1
+  
+  # Fix permissions on the download directory (mounted volume)
+  fix_download_dir_permissions
 }
 
 init () {
@@ -102,13 +121,6 @@ init_conf() {
       mv -n /usr/src/app/docs/gallery-dl.conf "$dir" >/dev/null 2>&1
     fi
   fi
-  
-  # Ensure /gallery-dl directory exists and has correct permissions
-  if [[ -d "/gallery-dl" ]]; then
-    mkdir -p /gallery-dl/vsco 2>/dev/null || true
-    chown -R "$UID:$GID" /gallery-dl >/dev/null 2>&1 || true
-    chmod -R 755 /gallery-dl >/dev/null 2>&1 || true
-  fi
 }
 
 exit() {
@@ -137,6 +149,7 @@ if [[ "$UID" -ne "$UID_OG" || "$GID" -ne "$GID_OG" ]]; then
     exit 2
   fi
 elif [[ "$(id -u -n 2>/dev/null)" == "root" ]]; then
+  fix_download_dir_permissions
   init
 elif [[ "$(id -u -n 2>/dev/null)" == "appuser" ]]; then
   init
