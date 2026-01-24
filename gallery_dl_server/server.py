@@ -7,6 +7,8 @@ import queue
 import shutil
 import signal
 import time
+from pathlib import Path
+from urllib.parse import quote
 
 from contextlib import asynccontextmanager
 from multiprocessing.queues import Queue
@@ -22,7 +24,7 @@ from starlette.datastructures import UploadFile
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
-from starlette.responses import RedirectResponse, JSONResponse, StreamingResponse
+from starlette.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from starlette.requests import Request
 from starlette.routing import Route, WebSocketRoute, Mount
 from starlette.staticfiles import StaticFiles
@@ -45,6 +47,9 @@ custom_args = output.args
 log_file = output.LOG_FILE
 last_line = ""
 last_position = 0
+default_download_dir = "/gallery-dl" if utils.CONTAINER else os.path.join(os.getcwd(), "gallery-dl")
+download_dir = utils.normalise_path(os.environ.get("DOWNLOAD_DIR", default_download_dir))
+download_root = Path(download_dir).resolve()
 
 log = output.initialise_logging(__name__)
 
@@ -237,6 +242,76 @@ async def log_stream(request: Request):
     return StreamingResponse(file_iterator(log_file), media_type="text/plain")
 
 
+async def download_files(request: Request):
+    """Return available downloads under the configured download directory."""
+    if not download_root.exists() or not download_root.is_dir():
+        return JSONResponse(
+            {
+                "success": True,
+                "directory": str(download_root),
+                "files": [],
+            },
+            status_code=HTTP_200_OK,
+        )
+
+    files: list[dict[str, str]] = []
+    for path in download_root.rglob("*"):
+        if path.is_file():
+            relative_path = path.relative_to(download_root).as_posix()
+            files.append(
+                {
+                    "name": path.name,
+                    "path": relative_path,
+                    "url": f"/gallery-dl/downloads/{quote(relative_path)}",
+                }
+            )
+
+    files.sort(key=lambda item: item["path"].lower())
+
+    return JSONResponse(
+        {
+            "success": True,
+            "directory": str(download_root),
+            "files": files,
+        },
+        status_code=HTTP_200_OK,
+    )
+
+
+async def download_file(request: Request):
+    """Serve a single file from the download directory."""
+    requested_path = request.path_params.get("path")
+    if not requested_path:
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "Missing download path.",
+            },
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    file_path = (download_root / requested_path).resolve()
+    if download_root not in file_path.parents and file_path != download_root:
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "Invalid download path.",
+            },
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    if not file_path.is_file():
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "Download not found.",
+            },
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    return FileResponse(file_path, filename=file_path.name)
+
+
 async def log_update(websocket: WebSocket):
     """Stream log file updates over WebSocket connection."""
     global last_line, last_position
@@ -402,6 +477,8 @@ routes = [
     Route("/gallery-dl/q", endpoint=submit_form, methods=["POST"]),
     Route("/gallery-dl/logs", endpoint=log_route, methods=["GET"]),
     Route("/gallery-dl/logs/clear", endpoint=clear_logs, methods=["POST"]),
+    Route("/gallery-dl/downloads", endpoint=download_files, methods=["GET"]),
+    Route("/gallery-dl/downloads/{path:path}", endpoint=download_file, methods=["GET"]),
     Route("/stream/logs", endpoint=log_stream, methods=["GET"]),
     WebSocketRoute("/ws/logs", endpoint=log_update),
     Mount("/static", app=StaticFiles(directory=utils.resource_path("static")), name="static"),

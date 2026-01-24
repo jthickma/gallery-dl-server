@@ -47,6 +47,8 @@ docker run -d \
 
 This is an example of a `docker-compose.yaml` service definition which can be used to start a running container with the `docker compose up -d` command.
 
+The repository also ships a ready-to-run [docker-compose.yml](https://github.com/qx6ghqkz/gallery-dl-server/blob/main/docker-compose.yml) that mounts `./config` and `./downloads` for a local setup.
+
 ```yaml
 services:
   gallery-dl:
@@ -124,6 +126,8 @@ services:
 - Make sure to mount the directory containing the configuration file rather than the file itself. This ensures changes to the configuration file are propagated to the running Docker container and it will not need to be restarted for changes to take effect. More information on this issue [here](https://github.com/moby/moby/issues/15793#issuecomment-135411504).
 
 - The output download directory depends on the `base-directory` in your gallery-dl configuration file. Make sure it is the absolute path `/gallery-dl/` instead of the relative path `./gallery-dl/` or else the download directory will need to be mounted to `/usr/src/app/gallery-dl` instead (not recommended).
+
+- Downloads can be accessed directly in the UI by selecting "Show Downloads". The list is served from `/gallery-dl/downloads` and links download files from the `/gallery-dl` directory in the container.
 
 - The environment variables `UID` and `GID` can be used to change the user ID and group ID of the user running the server process. This is important because downloaded files will be owned by that user. Make sure the IDs match those of the user on the host system. The default `UID:GID` is `1000:1000` when left unspecified.
 
@@ -215,6 +219,7 @@ Use the arguments when running the server directly from the command line, and th
 | `‑‑host`              | `HOST`               | &cross;     | `str`  | IP address or hostname                                             | `0.0.0.0`     | Specify the host address           |
 | `‑‑port`              | `PORT`               | &cross;     | `int`  | `0–65535`                                                          | `0`           | Specify the port to run the app    |
 |                       | `CONTAINER_PORT`     | &check;     | `int`  | `0–65535`                                                          | `9080`        | Set the internal container port    |
+| &mdash;               | `DOWNLOAD_DIR`       | &check;     | `str`  | Any existing directory                                             | `/gallery-dl` | Set the downloads directory        |
 | &mdash;               | `UID`                | &check;     | `int`  | Any valid user ID                                                  | `1000`        | User ID to run the server process  |
 | &mdash;               | `GID`                | &check;     | `int`  | Any valid group ID                                                 | `1000`        | Group ID to run the server process |
 | &mdash;               | `UMASK`              | &check;     | `int`  | Any valid `umask` value                                            | `022`         | Set `umask` for file permissions   |

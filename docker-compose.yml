@@ -1,0 +1,14 @@
+services:
+  gallery-dl:
+    image: qx6ghqkz/gallery-dl-server:latest
+    container_name: gallery-dl
+    ports:
+      - "9080:9080"
+    environment:
+      - "UID=1000"
+      - "GID=1000"
+      - "DOWNLOAD_DIR=/gallery-dl"
+    volumes:
+      - "./config:/config"
+      - "./downloads:/gallery-dl"
+    restart: on-failure
