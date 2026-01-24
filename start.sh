@@ -105,9 +105,12 @@ init_conf() {
   
   # Ensure /gallery-dl directory exists and has correct permissions
   if [[ -d "/gallery-dl" ]]; then
-    mkdir -p /gallery-dl/vsco 2>/dev/null || true
-    chown -R "$UID:$GID" /gallery-dl >/dev/null 2>&1 || true
-    chmod -R 755 /gallery-dl >/dev/null 2>&1 || true
+    if ! chown -R "$UID:$GID" /gallery-dl; then
+      echo "Warning: Failed to chown /gallery-dl. Attempting to relax permissions."
+      chmod -R 777 /gallery-dl || true
+    else
+      chmod -R 755 /gallery-dl
+    fi
   fi
 }
 
