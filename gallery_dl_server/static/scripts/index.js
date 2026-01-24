@@ -241,7 +241,6 @@ async function loadDownloads(show = false) {
   } catch (error) {
     clearDownloads();
     setDownloadsEmpty("Unable to load downloads.");
-    showDownloads();
     console.error(error);
   }
 }

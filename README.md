@@ -220,6 +220,7 @@ Use the arguments when running the server directly from the command line, and th
 | `‑‑port`              | `PORT`               | &cross;     | `int`  | `0–65535`                                                          | `0`           | Specify the port to run the app    |
 |                       | `CONTAINER_PORT`     | &check;     | `int`  | `0–65535`                                                          | `9080`        | Set the internal container port    |
 | &mdash;               | `DOWNLOAD_DIR`       | &check;     | `str`  | Any existing directory                                             | `/gallery-dl` | Set the downloads directory        |
+| &mdash;               | `DOWNLOAD_DEPTH`     | &check;     | `int`  | `0+`                                                               | &mdash;       | Limit download directory recursion |
 | &mdash;               | `UID`                | &check;     | `int`  | Any valid user ID                                                  | `1000`        | User ID to run the server process  |
 | &mdash;               | `GID`                | &check;     | `int`  | Any valid group ID                                                 | `1000`        | Group ID to run the server process |
 | &mdash;               | `UMASK`              | &check;     | `int`  | Any valid `umask` value                                            | `022`         | Set `umask` for file permissions   |

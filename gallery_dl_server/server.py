@@ -50,6 +50,14 @@ last_position = 0
 default_download_dir = "/gallery-dl" if utils.CONTAINER else os.path.join(os.getcwd(), "gallery-dl")
 download_dir = utils.normalise_path(os.environ.get("DOWNLOAD_DIR", default_download_dir))
 download_root = Path(download_dir).resolve()
+download_depth: int | None = None
+if (depth_env := os.environ.get("DOWNLOAD_DEPTH")) is not None:
+    try:
+        depth_value = int(depth_env)
+        if depth_value >= 0:
+            download_depth = depth_value
+    except ValueError:
+        download_depth = None
 
 log = output.initialise_logging(__name__)
 
@@ -255,16 +263,36 @@ async def download_files(request: Request):
         )
 
     files: list[dict[str, str]] = []
-    for path in download_root.rglob("*"):
-        if path.is_file():
-            relative_path = path.relative_to(download_root).as_posix()
-            files.append(
-                {
-                    "name": path.name,
-                    "path": relative_path,
-                    "url": f"/gallery-dl/downloads/{quote(relative_path)}",
-                }
-            )
+    try:
+        for path in download_root.rglob("*"):
+            try:
+                relative_path = path.relative_to(download_root)
+            except ValueError:
+                continue
+            if download_depth is not None:
+                # Directory depth excludes the file itself.
+                directory_depth = max(len(relative_path.parts) - 1, 0)
+                if directory_depth > download_depth:
+                    continue
+            if path.is_file():
+                relative_path_str = relative_path.as_posix()
+                files.append(
+                    {
+                        "name": path.name,
+                        "path": relative_path_str,
+                        "url": f"/gallery-dl/downloads/{quote(relative_path_str)}",
+                    }
+                )
+    except OSError:
+        log.error("Failed to scan download directory.")
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "Unable to scan download directory.",
+                "files": [],
+            },
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
     files.sort(key=lambda item: item["path"].lower())
 
@@ -291,7 +319,9 @@ async def download_file(request: Request):
         )
 
     file_path = (download_root / requested_path).resolve()
-    if download_root not in file_path.parents and file_path != download_root:
+    try:
+        file_path.relative_to(download_root)
+    except ValueError:
         return JSONResponse(
             {
                 "success": False,
