@@ -85,6 +85,8 @@ init_conf() {
     "config.toml"
   )
 
+  export DOWNLOAD_DIR="${DOWNLOAD_DIR:-/gallery-dl}"
+
   if [[ -d "$dir" ]]; then
     rm -f "$dir/hosts" "$dir/hostname" "$dir/resolv.conf" >/dev/null 2>&1
 

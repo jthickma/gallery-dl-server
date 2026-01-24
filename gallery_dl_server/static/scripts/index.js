@@ -169,6 +169,86 @@ form.onsubmit = async (event) => {
   }
 };
 
+const downloadsContainer = document.getElementById("downloads-container");
+const downloadsEmpty = document.getElementById("downloads-empty");
+const downloadsList = document.getElementById("downloads-list");
+const downloadsRefresh = document.getElementById("downloads-refresh");
+
+function clearDownloads() {
+  downloadsList.innerHTML = "";
+}
+
+function setDownloadsEmpty(message) {
+  downloadsEmpty.textContent = message;
+  downloadsEmpty.classList.remove("d-none");
+}
+
+function hideDownloadsEmpty() {
+  downloadsEmpty.classList.add("d-none");
+}
+
+function showDownloads() {
+  downloadsContainer.classList.remove("d-none");
+}
+
+function hideDownloads() {
+  downloadsContainer.classList.add("d-none");
+}
+
+function toggleDownloads() {
+  if (downloadsContainer.classList.contains("d-none")) {
+    loadDownloads(true);
+    downloadsRefresh.textContent = "Hide Downloads";
+  } else {
+    hideDownloads();
+    downloadsRefresh.textContent = "Show Downloads";
+  }
+}
+
+async function loadDownloads(show = false) {
+  try {
+    const response = await fetch("/gallery-dl/downloads", { method: "GET" });
+
+    if (!response.ok) {
+      throw new Error(`Response status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    clearDownloads();
+
+    if (!data.files || data.files.length === 0) {
+      setDownloadsEmpty("No downloads found yet.");
+    } else {
+      hideDownloadsEmpty();
+      for (const file of data.files) {
+        const item = document.createElement("li");
+        item.className = "list-group-item bg-transparent text-white px-0";
+
+        const link = document.createElement("a");
+        link.href = file.url;
+        link.textContent = file.path;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+
+        item.appendChild(link);
+        downloadsList.appendChild(item);
+      }
+    }
+
+    if (show) {
+      showDownloads();
+    }
+  } catch (error) {
+    clearDownloads();
+    setDownloadsEmpty("Unable to load downloads.");
+    console.error(error);
+  }
+}
+
+if (downloadsRefresh) {
+  downloadsRefresh.onclick = () => toggleDownloads();
+}
+
 let ws;
 let isConnected = false;
 let isPageAlive = true;

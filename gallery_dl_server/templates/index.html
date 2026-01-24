@@ -132,10 +132,20 @@
 
         <div id="container-toggle" class="mb-4">
           <button id="button-logs" class="btn btn-custom">Show Logs</button>
+          <button id="downloads-refresh" class="btn btn-custom">Show Downloads</button>
         </div>
 
         <div id="container-logs" class="mb-0">
           <textarea id="box" class="d-none" name="Logs" placeholder="Logs output" readonly></textarea>
+        </div>
+
+        <div id="downloads-container" class="mt-3 d-none">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h2 class="h5 mb-0 text-white">Downloads</h2>
+            <span class="small text-muted">Files in /gallery-dl</span>
+          </div>
+          <p id="downloads-empty" class="text-white-50 d-none"></p>
+          <ul id="downloads-list" class="list-group list-group-flush"></ul>
         </div>
       </div>
 
