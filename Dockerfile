@@ -1,4 +1,4 @@
-FROM python:3.12-alpine AS builder
+FROM python:3.12-alpine3.19 AS builder
 
 WORKDIR /usr/src/app
 
@@ -11,7 +11,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 
 COPY . .
 
-FROM python:3.12-alpine
+FROM python:3.12-alpine3.19
 
 RUN apk add --no-cache \
     bash \
