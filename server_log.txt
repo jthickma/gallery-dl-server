@@ -1,0 +1,7 @@
+[2026-02-21 21:12:12 -0600] [49400] [INFO] Starting gunicorn 25.1.0
+[2026-02-21 21:12:12 -0600] [49400] [INFO] Listening at: http://0.0.0.0:9080 (49400)
+[2026-02-21 21:12:12 -0600] [49400] [INFO] Using worker: sync
+[2026-02-21 21:12:12 -0600] [49400] [INFO] Control socket listening at /Users/jacksonhickman/Projects/gallery-dl-server/gunicorn.ctl
+[2026-02-21 21:12:12 -0600] [49533] [INFO] Booting worker with pid: 49533
+[2026-02-21 21:12:28 -0600] [49533] [INFO] Parent changed, shutting down: <Worker 49533>
+[2026-02-21 21:12:28 -0600] [49533] [INFO] Worker exiting (pid: 49533)

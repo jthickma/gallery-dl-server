@@ -1,41 +1,21 @@
 # -*- coding: utf-8 -*-
 
-import asyncio
-import multiprocessing
 import os
 import queue
 import shutil
 import signal
 import time
+import threading
+import multiprocessing
+import atexit
 from pathlib import Path
 from urllib.parse import quote
 
-from contextlib import asynccontextmanager
-from multiprocessing.queues import Queue
-from types import FrameType
 from typing import Any
 
-import aiofiles
-import watchfiles
-
-from starlette.applications import Starlette
-from starlette.background import BackgroundTask
-from starlette.datastructures import UploadFile
-from starlette.middleware import Middleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.cors import CORSMiddleware
-from starlette.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
-from starlette.requests import Request
-from starlette.routing import Route, WebSocketRoute, Mount
-from starlette.staticfiles import StaticFiles
-from starlette.status import (
-    HTTP_200_OK,
-    HTTP_404_NOT_FOUND,
-    HTTP_500_INTERNAL_SERVER_ERROR,
-)
-from starlette.templating import Jinja2Templates
-from starlette.types import ASGIApp
-from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
+from flask import Flask, request, jsonify, render_template, redirect, Response, send_file
+from flask_sock import Sock
+from flask_cors import CORS
 
 import gallery_dl.version
 import yt_dlp.version
@@ -43,14 +23,12 @@ import yt_dlp.version
 from . import download, output, utils, version
 
 custom_args = output.args
-
 log_file = output.LOG_FILE
-last_line = ""
-last_position = 0
 default_download_dir = "/gallery-dl" if utils.CONTAINER else os.path.join(os.getcwd(), "gallery-dl")
 download_dir = utils.normalise_path(os.environ.get("DOWNLOAD_DIR", default_download_dir))
 download_root = Path(download_dir).resolve()
-download_depth: int | None = None
+
+download_depth = None
 if (depth_env := os.environ.get("DOWNLOAD_DEPTH")) is not None:
     try:
         depth_value = int(depth_env)
@@ -61,70 +39,77 @@ if (depth_env := os.environ.get("DOWNLOAD_DEPTH")) is not None:
 
 log = output.initialise_logging(__name__)
 
+app = Flask(
+    __name__,
+    template_folder=utils.resource_path("templates"),
+    static_folder=utils.resource_path("static"),
+    static_url_path='/static'
+)
 
-async def redirect(request: Request):
-    """Redirect to homepage on request."""
-    return RedirectResponse(url="/gallery-dl")
+CORS(app)
+sock = Sock(app)
 
+shutdown_in_progress = False
+active_sockets = set()
+socket_lock = threading.Lock()
 
-async def homepage(request: Request):
-    """Return homepage template response."""
-    return templates.TemplateResponse(
+@app.after_request
+def add_csp_headers(response):
+    csp = (
+        "default-src 'self'; "
+        "connect-src 'self'; "
+        "form-action 'self'; "
+        "manifest-src 'self'; "
+        "img-src 'self' data:; "
+        "script-src 'self' https://cdn.jsdelivr.net; "
+        "style-src 'self' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+        "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com;"
+    )
+    if "Content-Security-Policy" not in response.headers:
+        response.headers["Content-Security-Policy"] = csp
+    return response
+
+@app.route("/", methods=["GET"])
+def redirect_home():
+    return redirect("/gallery-dl")
+
+@app.route("/gallery-dl", methods=["GET"])
+def homepage():
+    return render_template(
         "index.html",
-        {
-            "request": request,
-            "app_version": version.__version__,
-            "gallery_dl_version": gallery_dl.version.__version__,
-            "yt_dlp_version": yt_dlp.version.__version__,
-        },
+        app_version=version.__version__,
+        gallery_dl_version=gallery_dl.version.__version__,
+        yt_dlp_version=yt_dlp.version.__version__,
     )
 
-
-async def submit_form(request: Request):
-    """Process form submission data and start download in the background."""
-    form_data = await request.form()
-
-    keys = ("url", "video-opts")
-    values = tuple(form_data.get(key) for key in keys)
-
-    url, video_opts = (None if isinstance(value, UploadFile) else value for value in values)
+@app.route("/gallery-dl/q", methods=["POST"])
+def submit_form():
+    url = request.form.get("url")
+    video_opts = request.form.get("video-opts")
 
     if not url:
         log.error("No URL provided.")
-
-        return JSONResponse(
-            {
-                "success": False,
-                "error": "/q called without a 'url' in form data",
-            },
-        )
+        return jsonify({"success": False, "error": "/q called without a 'url' in form data"}), 400
 
     if not video_opts:
         video_opts = "none-selected"
 
     request_options = {"video-options": video_opts}
+    url_stripped = url.strip()
 
-    task = BackgroundTask(download_task, url.strip(), request_options)
+    def run_task():
+        download_task(url_stripped, request_options)
 
-    log.info("Added URL to the download queue: %s", url)
+    threading.Thread(target=run_task, daemon=True).start()
 
-    return JSONResponse(
-        {
-            "success": True,
-            "url": url,
-            "options": request_options,
-        },
-        background=task,
-    )
+    log.info("Added URL to the download queue: %s", url_stripped)
+    return jsonify({"success": True, "url": url_stripped, "options": request_options}), 202
 
-
-def download_task(url: str, request_options: dict[str, str]):
-    """Initiate download as a subprocess and log the output."""
-    log_queue: Queue[dict[str, Any]] = multiprocessing.Queue()
-    return_status: Queue[int] = multiprocessing.Queue()
+def download_task(url: str, request_options: dict):
+    log_queue = multiprocessing.Queue()
+    return_status = multiprocessing.Queue()
 
     args = (url, request_options, log_queue, return_status, custom_args)
-
     process = multiprocessing.Process(target=download.run, args=args)
     process.start()
 
@@ -156,85 +141,43 @@ def download_task(url: str, request_options: dict[str, str]):
     else:
         log.error("Download failed with exit code: %s", exit_code)
 
+@app.route("/gallery-dl/logs", methods=["GET"])
+def log_route():
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            logs = f.read()
+    except FileNotFoundError:
+        logs = "Log file not found."
+    except Exception as e:
+        log.debug(f"Exception: {type(e).__name__}: {e}")
+        logs = f"An error occurred: {e}"
 
-async def log_route(request: Request):
-    """Return logs page template response."""
+    if not logs:
+        logs = "No logs to display."
 
-    async def read_log_file(file_path: str):
-        log_contents = ""
-        try:
-            async with aiofiles.open(file_path, mode="r", encoding="utf-8") as file:
-                async for line in file:
-                    log_contents += line
-        except FileNotFoundError:
-            return "Log file not found."
-        except Exception as e:
-            log.debug(f"Exception: {type(e).__name__}: {e}")
-            return f"An error occurred: {e}"
+    return render_template("logs.html", app_version=version.__version__, logs=logs)
 
-        return log_contents if log_contents else "No logs to display."
-
-    logs = await read_log_file(log_file)
-
-    return templates.TemplateResponse(
-        "logs.html",
-        {
-            "request": request,
-            "app_version": version.__version__,
-            "logs": logs,
-        },
-    )
-
-
-async def clear_logs(request: Request):
-    """Clear the log file on request."""
+@app.route("/gallery-dl/logs/clear", methods=["POST"])
+def clear_logs():
     try:
         with open(log_file, "w") as file:
             file.write("")
-
-        return JSONResponse(
-            {
-                "success": True,
-                "message": "Logs successfully cleared.",
-            },
-            status_code=HTTP_200_OK,
-        )
+        return jsonify({"success": True, "message": "Logs successfully cleared."}), 200
     except FileNotFoundError:
-        return JSONResponse(
-            {
-                "success": False,
-                "error": "Log file not found.",
-            },
-            status_code=HTTP_404_NOT_FOUND,
-        )
+        return jsonify({"success": False, "error": "Log file not found."}), 404
     except IOError:
-        return JSONResponse(
-            {
-                "success": False,
-                "error": "An error occurred while accessing the log file.",
-            },
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        return jsonify({"success": False, "error": "An error occurred while accessing the log file."}), 500
     except Exception as e:
         log.debug(f"Exception: {type(e).__name__}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
-        return JSONResponse(
-            {
-                "success": False,
-                "error": str(e),
-            },
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-        )
-
-
-async def log_stream(request: Request):
-    """Stream the full contents of the log file."""
-
-    async def file_iterator(file_path: str):
+@app.route("/stream/logs", methods=["GET"])
+def stream_logs():
+    def generate():
         try:
-            async with aiofiles.open(file_path, mode="r", encoding="utf-8") as file:
+            with open(log_file, "r", encoding="utf-8") as file:
                 while True:
-                    chunk = await file.read(64 * 1024)
+                    chunk = file.read(64 * 1024)
                     if not chunk:
                         break
                     if utils.WINDOWS:
@@ -247,22 +190,14 @@ async def log_stream(request: Request):
             log.debug(f"Exception: {type(e).__name__}: {e}")
             yield f"An error occurred: {type(e).__name__}: {e}"
 
-    return StreamingResponse(file_iterator(log_file), media_type="text/plain")
+    return Response(generate(), mimetype="text/plain")
 
-
-async def download_files(request: Request):
-    """Return available downloads under the configured download directory."""
+@app.route("/gallery-dl/downloads", methods=["GET"])
+def list_downloads():
     if not download_root.exists() or not download_root.is_dir():
-        return JSONResponse(
-            {
-                "success": True,
-                "directory": str(download_root),
-                "files": [],
-            },
-            status_code=HTTP_200_OK,
-        )
+        return jsonify({"success": True, "directory": str(download_root), "files": []}), 200
 
-    files: list[dict[str, str]] = []
+    files = []
     try:
         for path in download_root.rglob("*"):
             try:
@@ -270,264 +205,119 @@ async def download_files(request: Request):
             except ValueError:
                 continue
             if download_depth is not None:
-                # Directory depth excludes the file itself.
                 directory_depth = max(len(relative_path.parts) - 1, 0)
                 if directory_depth > download_depth:
                     continue
             if path.is_file():
                 relative_path_str = relative_path.as_posix()
-                files.append(
-                    {
-                        "name": path.name,
-                        "path": relative_path_str,
-                        "url": f"/gallery-dl/downloads/{quote(relative_path_str)}",
-                    }
-                )
+                files.append({
+                    "name": path.name,
+                    "path": relative_path_str,
+                    "url": f"/gallery-dl/downloads/{quote(relative_path_str)}",
+                })
     except OSError:
         log.error("Failed to scan download directory.")
-        return JSONResponse(
-            {
-                "success": False,
-                "error": "Unable to scan download directory.",
-                "files": [],
-            },
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        return jsonify({"success": False, "error": "Unable to scan download directory.", "files": []}), 500
 
     files.sort(key=lambda item: item["path"].lower())
+    return jsonify({"success": True, "directory": str(download_root), "files": files}), 200
 
-    return JSONResponse(
-        {
-            "success": True,
-            "directory": str(download_root),
-            "files": files,
-        },
-        status_code=HTTP_200_OK,
-    )
+@app.route("/gallery-dl/downloads/<path:path>", methods=["GET"])
+def get_download_file(path):
+    if not path:
+        return jsonify({"success": False, "error": "Missing download path."}), 404
 
-
-async def download_file(request: Request):
-    """Serve a single file from the download directory."""
-    requested_path = request.path_params.get("path")
-    if not requested_path:
-        return JSONResponse(
-            {
-                "success": False,
-                "error": "Missing download path.",
-            },
-            status_code=HTTP_404_NOT_FOUND,
-        )
-
-    file_path = (download_root / requested_path).resolve()
+    target = (download_root / path).resolve()
     try:
-        file_path.relative_to(download_root)
+        target.relative_to(download_root)
     except ValueError:
-        return JSONResponse(
-            {
-                "success": False,
-                "error": "Invalid download path.",
-            },
-            status_code=HTTP_404_NOT_FOUND,
-        )
+        return jsonify({"success": False, "error": "Invalid download path."}), 404
 
-    if not file_path.is_file():
-        return JSONResponse(
-            {
-                "success": False,
-                "error": "Download not found.",
-            },
-            status_code=HTTP_404_NOT_FOUND,
-        )
+    if not target.is_file():
+        return jsonify({"success": False, "error": "Download not found."}), 404
 
-    return FileResponse(file_path, filename=file_path.name)
+    return send_file(target)
 
+@sock.route("/ws/logs")
+def log_update(ws):
+    with socket_lock:
+        active_sockets.add(ws)
 
-async def log_update(websocket: WebSocket):
-    """Stream log file updates over WebSocket connection."""
-    global last_line, last_position
+    last_position = 0
+    last_line = ""
 
-    await websocket.accept()
-    log.debug(f"Accepted WebSocket connection: {websocket}")
+    log.debug(f"Accepted WebSocket connection: {ws}")
 
-    async with connections_lock:
-        active_connections.add(websocket)
-        log.debug("WebSocket added to active connections")
     try:
-        async with aiofiles.open(log_file, mode="r", encoding="utf-8") as file:
-            await file.seek(0, os.SEEK_END)
+        with open(log_file, "r", encoding="utf-8") as file:
+            file.seek(0, os.SEEK_END)
+            last_size = os.path.getsize(log_file)
 
-            async for changes in watchfiles.awatch(
-                log_file,
-                stop_event=shutdown_event,
-                rust_timeout=100,
-                yield_on_timeout=True,
-            ):
-                new_content = ""
-                do_update_state = False
+            while True:
+                time.sleep(0.1)
+                
+                try:
+                    current_size = os.path.getsize(log_file)
+                except OSError:
+                    continue
 
-                previous_line, position = await asyncio.to_thread(
-                    output.read_previous_line, log_file, last_position
-                )
-                if "B/s" in previous_line and previous_line != last_line:
-                    new_content = previous_line
-                    do_update_state = True
+                if current_size < last_size:
+                    file.seek(0)
+                    last_size = 0
+                elif current_size > last_size:
+                    new_content = ""
+                    do_update_state = False
+                    
+                    try:
+                        previous_line, position = output.read_previous_line(log_file, last_position)
+                        if "B/s" in previous_line and previous_line != last_line:
+                            new_content = previous_line
+                            do_update_state = True
+                    except Exception:
+                        position = last_position
+                        previous_line = last_line
+                    
+                    new_lines = file.read()
+                    if new_lines.strip():
+                        new_content += new_lines
 
-                new_lines = await file.read()
-                if new_lines.strip():
-                    new_content += new_lines
+                    if new_content.strip():
+                        ws.send(new_content)
 
-                if new_content.strip():
-                    await websocket.send_text(new_content)
+                        if do_update_state:
+                            last_line = previous_line
+                            last_position = position
+                        else:
+                            last_line = ""
+                            last_position = 0
+                            
+                    last_size = current_size
 
-                    if do_update_state:
-                        last_line = previous_line
-                        last_position = position
-                    else:
-                        last_line = ""
-                        last_position = 0
-    except asyncio.CancelledError as e:
-        log.debug(f"Exception: {type(e).__name__}")
-    except WebSocketDisconnect as e:
-        log.debug(f"Exception: {type(e).__name__}")
     except Exception as e:
         log.debug(f"Exception: {type(e).__name__}: {e}")
     finally:
-        async with connections_lock:
-            if websocket in active_connections:
-                active_connections.remove(websocket)
-                log.debug("WebSocket removed from active connections")
+        with socket_lock:
+            if ws in active_sockets:
+                active_sockets.remove(ws)
+        log.debug("WebSocket removed")
 
+setup_done = False
+@app.before_request
+def setup_logging():
+    global setup_done
+    if not setup_done:
+        output.configure_default_loggers()
+        setup_done = True
 
-@asynccontextmanager
-async def lifespan(app: Starlette):
-    """Run server startup and shutdown tasks."""
-    output.configure_default_loggers()
-
-    uvicorn_log = output.get_logger("uvicorn")
-    uvicorn_log.info(f"Starting {type(app).__name__} application.")
-
-    await shutdown_override()
-    try:
-        yield
-    except asyncio.CancelledError:
-        pass
-    finally:
-        if utils.CONTAINER and os.path.isdir("/config"):
-            if os.path.isfile(log_file) and os.path.getsize(log_file) > 0:
-                dst_dir = "/config/logs"
-
-                os.makedirs(dst_dir, exist_ok=True)
-
-                dst = os.path.join(dst_dir, "app_" + time.strftime("%Y-%m-%d_%H-%M-%S") + ".log")
+@atexit.register
+def shutdown_hooks():
+    if utils.CONTAINER and os.path.isdir("/config"):
+        if os.path.isfile(log_file) and os.path.getsize(log_file) > 0:
+            dst_dir = "/config/logs"
+            os.makedirs(dst_dir, exist_ok=True)
+            dst = os.path.join(dst_dir, "app_" + time.strftime("%Y-%m-%d_%H-%M-%S") + ".log")
+            try:
                 shutil.copy2(log_file, dst)
-
-
-async def shutdown_override():
-    """Override uvicorn signal handlers to ensure a graceful shutdown."""
-    sigint_handler = signal.getsignal(signal.SIGINT)
-    sigterm_handler = signal.getsignal(signal.SIGTERM)
-
-    def shutdown(sig: int, frame: FrameType | None = None):
-        """Call shutdown handler and then original handler as a callback."""
-        global shutdown_in_progress
-        if shutdown_in_progress:
-            return
-
-        shutdown_in_progress = True
-
-        event_loop = asyncio.get_event_loop()
-        future = asyncio.run_coroutine_threadsafe(shutdown_handler(), event_loop)
-        future.add_done_callback(lambda f: call_original_handler(sig, frame))
-
-    def call_original_handler(sig: int, frame: FrameType | None = None):
-        """Call the original signal handler for server shutdown."""
-        if sig == signal.SIGINT and callable(sigint_handler):
-            sigint_handler(sig, frame)
-        elif sig == signal.SIGTERM and callable(sigterm_handler):
-            sigterm_handler(sig, frame)
-
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
-
-
-async def shutdown_handler():
-    """Initiate server shutdown."""
-    if not shutdown_event.is_set():
-        shutdown_event.set()
-        log.debug("Set shutdown event")
-
-    await close_connections()
+            except Exception:
+                pass
     output.close_handlers()
-
-
-async def close_connections():
-    """Close WebSocket connections and clear the set of active connections."""
-    async with connections_lock:
-        log.debug(f"Active connections before closing: {len(active_connections)}")
-        log.debug(f"Active tasks before closing: {len(asyncio.all_tasks())}")
-
-        close_connections = []
-        for websocket in active_connections:
-            if websocket.client_state == WebSocketState.CONNECTED:
-                close_connections.append(websocket.close())
-                log.debug(f"Scheduled WebSocket for closure: {websocket}")
-
-        if close_connections:
-            await asyncio.gather(*close_connections)
-            log.debug("Closed all WebSocket connections")
-
-        if active_connections:
-            active_connections.clear()
-            log.debug("Cleared active connections")
-
-
-class CSPMiddleware(BaseHTTPMiddleware):
-    """Enforce Content Security Policy for all requests."""
-
-    def __init__(self, app: ASGIApp, csp_policy: str):
-        super().__init__(app)
-        self.csp_policy = csp_policy
-
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        response.headers["Content-Security-Policy"] = self.csp_policy
-        return response
-
-
-templates = Jinja2Templates(directory=utils.resource_path("templates"))
-
-active_connections: set[WebSocket] = set()
-connections_lock = asyncio.Lock()
-shutdown_event = asyncio.Event()
-shutdown_in_progress = False
-
-routes = [
-    Route("/", endpoint=redirect, methods=["GET"]),
-    Route("/gallery-dl", endpoint=homepage, methods=["GET"]),
-    Route("/gallery-dl/q", endpoint=submit_form, methods=["POST"]),
-    Route("/gallery-dl/logs", endpoint=log_route, methods=["GET"]),
-    Route("/gallery-dl/logs/clear", endpoint=clear_logs, methods=["POST"]),
-    Route("/gallery-dl/downloads", endpoint=download_files, methods=["GET"]),
-    Route("/gallery-dl/downloads/{path:path}", endpoint=download_file, methods=["GET"]),
-    Route("/stream/logs", endpoint=log_stream, methods=["GET"]),
-    WebSocketRoute("/ws/logs", endpoint=log_update),
-    Mount("/static", app=StaticFiles(directory=utils.resource_path("static")), name="static"),
-]
-
-csp_policy = (
-    "default-src 'self'; "
-    "connect-src 'self'; "
-    "form-action 'self'; "
-    "manifest-src 'self'; "
-    "img-src 'self' data:; "
-    "script-src 'self' https://cdn.jsdelivr.net; "
-    "style-src 'self' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
-    "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com;"
-)
-
-middleware = [
-    Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["POST"]),
-    Middleware(CSPMiddleware, csp_policy=csp_policy),
-]
-
-app = Starlette(debug=True, routes=routes, middleware=middleware, lifespan=lifespan)

@@ -1,6 +1,6 @@
 services:
   gallery-dl:
-    image: qx6ghqkz/gallery-dl-server:latest
+    build: .
     container_name: gallery-dl
     ports:
       - "9080:9080"

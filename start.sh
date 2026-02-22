@@ -83,9 +83,9 @@ log() {
 start() {
   init_conf
   if [[ $1 -eq 0 ]]; then
-    exec script -q -c "exec su-exec appuser python3 -m gallery_dl_server --port $CONTAINER_PORT" /dev/null
+    exec script -q -c "exec su-exec appuser gunicorn -w 1 -b 0.0.0.0:$CONTAINER_PORT 'gallery_dl_server.server:app' --timeout 120" /dev/null
   elif [[ $1 -eq 1 ]]; then
-    exec script -q -c "exec python3 -m gallery_dl_server --port $CONTAINER_PORT" /dev/null
+    exec script -q -c "exec gunicorn -w 1 -b 0.0.0.0:$CONTAINER_PORT 'gallery_dl_server.server:app' --timeout 120" /dev/null
   else
     exit 0
   fi

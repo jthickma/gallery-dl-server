@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 
-import uvicorn
-
 from . import options
-
+from .server import app as flask_app
+import logging
 
 def main(
     app: str = "gallery_dl_server.server:app",
@@ -17,11 +16,12 @@ def main(
     kwargs = {
         "host": args.host,
         "port": args.port,
-        "log_level": args.server_log_level,
-        "access_log": args.access_log,
+        "threaded": True,
     }
 
     try:
-        uvicorn.run(app, **kwargs)
+        # Use simple werkzeug server for start-up handling.
+        # In a real production deployment, this might be wrapped in gunicorn in start.sh
+        flask_app.run(host=args.host, port=args.port, threaded=True)
     except KeyboardInterrupt:
         pass
