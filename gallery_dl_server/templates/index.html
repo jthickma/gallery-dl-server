@@ -67,6 +67,7 @@
     <header class="container-fluid d-flex justify-content-between align-items-center px-3 py-1">
       <div id="header-left">
         <a id="home" class="py-0" href="/gallery-dl">dl&nbsp;</a>
+        <a id="files" class="py-3" href="#downloads-browser">Files</a>
         <a id="logs" class="py-3" href="/gallery-dl/logs">Logs</a>
       </div>
 
@@ -137,6 +138,37 @@
         <div id="container-logs" class="mb-0">
           <textarea id="box" class="d-none" name="Logs" placeholder="Logs output" readonly></textarea>
         </div>
+
+        <section id="downloads-browser" class="mt-4 mb-2 text-start">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+            <h2 class="h5 mb-0 me-auto">Downloads</h2>
+            <button id="refresh-downloads" class="btn btn-sm btn-custom" type="button"
+              >Refresh</button
+            >
+            <a id="download-all-zip" class="btn btn-sm btn-custom" href="/gallery-dl/files/archive"
+              >Download All as ZIP</a
+            >
+          </div>
+
+          <div id="downloads-root" class="small mb-2"></div>
+
+          <nav id="downloads-breadcrumbs" class="mb-2" aria-label="Download path breadcrumbs"></nav>
+
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0" id="downloads-table">
+              <thead>
+                <tr>
+                  <th scope="col">Name</th>
+                  <th scope="col" class="text-nowrap">Type</th>
+                  <th scope="col" class="text-nowrap">Size</th>
+                  <th scope="col" class="text-nowrap">Modified</th>
+                  <th scope="col" class="text-nowrap text-end">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="downloads-body"></tbody>
+            </table>
+          </div>
+        </section>
       </div>
 
       <div class="mt-auto"></div>
@@ -164,6 +196,6 @@
       <button id="dark-mode-toggle" class="btn btn-custom"><i class="bi bi-moon-fill"></i></button>
     </footer>
 
-    <script src="/static/scripts/index.js?v=0.1.6"></script>
+    <script src="/static/scripts/index.js?v=0.2.0"></script>
   </body>
 </html>

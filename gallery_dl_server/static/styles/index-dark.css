@@ -49,3 +49,35 @@ div.input-group > select.form-select:focus {
 .swal2-success-ring {
   border-color: #9200b3 !important;
 }
+
+#downloads-root {
+  color: #afafaf;
+}
+
+#downloads-breadcrumbs {
+  color: #c7c7c7;
+}
+
+#downloads-breadcrumbs .btn-link,
+#downloads-table .btn-link {
+  color: #e2afff;
+}
+
+#downloads-breadcrumbs .btn-link:hover,
+#downloads-table .btn-link:hover {
+  color: #d000ff;
+}
+
+#downloads-table {
+  color: #cfcfcf;
+  border-color: #333333;
+}
+
+#downloads-table > thead > tr > th {
+  color: #d8d8d8;
+  border-bottom-color: #444444;
+}
+
+#downloads-table > tbody > tr > td {
+  border-bottom-color: #333333;
+}

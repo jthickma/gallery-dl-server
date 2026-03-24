@@ -4,6 +4,11 @@
 # The environment variables for your VPN configuration can go in this file or a separate `.env` file in the same directory,
 # or specify the location with `docker compose --env-file <location> up -d`.
 #
+# Notes on downloads volume targets:
+# - Preferred: mount host downloads to /gallery-dl and set base-directory to /gallery-dl.
+# - Compatibility: if config uses base-directory=~/Media/gallery-dl, mount the same host directory
+#   to /usr/src/app/Media/gallery-dl as well.
+#
 
 services:
   gallery-dl:
@@ -20,6 +25,8 @@ services:
     volumes:
       - ./config:/config
       - ~/Downloads/gallery-dl:/gallery-dl
+      # Optional compatibility mapping for legacy base-directory=~/Media/gallery-dl
+      # - ~/Downloads/gallery-dl:/usr/src/app/Media/gallery-dl
     restart: on-failure
 
   gluetun:

@@ -20,6 +20,8 @@ Web UI for [`gallery-dl`](https://github.com/mikf/gallery-dl) with support for d
 * [Dependencies](https://github.com/qx6ghqkz/gallery-dl-server#dependencies)
 * [Configuration](https://github.com/qx6ghqkz/gallery-dl-server#configuration)
 * [Usage](https://github.com/qx6ghqkz/gallery-dl-server#usage)
+  * [Downloads Browser and Archive](https://github.com/qx6ghqkz/gallery-dl-server#downloads-browser-and-archive)
+  * [REST Endpoints](https://github.com/qx6ghqkz/gallery-dl-server#rest-endpoints)
 * [Implementation](https://github.com/qx6ghqkz/gallery-dl-server#implementation)
 * [Useful Links](https://github.com/qx6ghqkz/gallery-dl-server#useful-links)
 
@@ -123,7 +125,19 @@ services:
 
 - Make sure to mount the directory containing the configuration file rather than the file itself. This ensures changes to the configuration file are propagated to the running Docker container and it will not need to be restarted for changes to take effect. More information on this issue [here](https://github.com/moby/moby/issues/15793#issuecomment-135411504).
 
-- The output download directory depends on the `base-directory` in your gallery-dl configuration file. Make sure it is the absolute path `/gallery-dl/` instead of the relative path `./gallery-dl/` or else the download directory will need to be mounted to `/usr/src/app/gallery-dl` instead (not recommended).
+- The output download directory depends on the configured `base-directory` in gallery-dl. In Docker, use an absolute container path and mount that same path as a volume target.
+
+- For the most predictable behavior, set `base-directory` to `/gallery-dl` (or `extractor.base-directory` to `/gallery-dl`) and mount `/path/to/downloads:/gallery-dl`.
+
+- If your configuration uses `base-directory: ~/Media/gallery-dl`, this resolves to `/usr/src/app/Media/gallery-dl` in the default container image. Mount the same host directory to this path as well, or update your config to `/gallery-dl`.
+
+- Example compatibility mapping when running mixed/legacy configs:
+
+```yaml
+volumes:
+  - "/path/to/downloads:/gallery-dl"
+  - "/path/to/downloads:/usr/src/app/Media/gallery-dl"
+```
 
 - The environment variables `UID` and `GID` can be used to change the user ID and group ID of the user running the server process. This is important because downloaded files will be owned by that user. Make sure the IDs match those of the user on the host system. The default `UID:GID` is `1000:1000` when left unspecified.
 
@@ -277,6 +291,48 @@ Downloads can be triggered by supplying the `{{url}}` of the requested video thr
 ### Web UI
 
 Navigate to `http://{{host}}:{{port}}/gallery-dl` and enter the requested `{{url}}`.
+
+### Downloads Browser and Archive
+
+The web UI now includes a `Downloads` section with filebrowser-style navigation:
+
+- Browse folders inside the active download root.
+- Open files in the browser.
+- Download individual files.
+- Download all current files as a single ZIP archive.
+
+The download root shown in the UI is resolved from gallery-dl configuration in this order:
+
+1. `extractor.base-directory`
+2. `base-directory`
+3. Docker fallback: `/gallery-dl`
+4. Non-Docker fallback: `./gallery-dl`
+
+All file operations are restricted to this resolved download root.
+
+### REST Endpoints
+
+The following endpoints are available for browsing and serving downloaded files:
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/gallery-dl/files?path={{relative_path}}` | List directory contents relative to the active download root |
+| `GET` | `/gallery-dl/files/content?path={{relative_path}}` | Serve file content for direct browser viewing |
+| `GET` | `/gallery-dl/files/download?path={{relative_path}}` | Download a single file as an attachment |
+| `GET` | `/gallery-dl/files/archive` | Create and download a ZIP archive of all downloaded files |
+
+Examples:
+
+```shell
+# List root directory
+curl "http://{{host}}:{{port}}/gallery-dl/files"
+
+# List subdirectory
+curl "http://{{host}}:{{port}}/gallery-dl/files?path=artist/example"
+
+# Download all files as ZIP
+curl -L -o gallery-dl-downloads.zip "http://{{host}}:{{port}}/gallery-dl/files/archive"
+```
 
 ### Curl
 

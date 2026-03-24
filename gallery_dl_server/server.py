@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import mimetypes
 import multiprocessing
 import os
 import queue
 import shutil
 import signal
+import tempfile
 import time
+import zipfile
 
 from contextlib import asynccontextmanager
 from multiprocessing.queues import Queue
@@ -22,7 +25,7 @@ from starlette.datastructures import UploadFile
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
-from starlette.responses import RedirectResponse, JSONResponse, StreamingResponse
+from starlette.responses import RedirectResponse, JSONResponse, StreamingResponse, FileResponse
 from starlette.requests import Request
 from starlette.routing import Route, WebSocketRoute, Mount
 from starlette.staticfiles import StaticFiles
@@ -103,6 +106,273 @@ async def submit_form(request: Request):
         },
         background=task,
     )
+
+
+def get_default_download_root():
+    """Return fallback download root based on runtime environment."""
+    if utils.CONTAINER:
+        return "/gallery-dl"
+
+    return utils.normalise_path("./gallery-dl")
+
+
+def get_download_root():
+    """Resolve the active gallery-dl base directory.
+
+    This supports Docker volume mappings by honoring the configured
+    `extractor.base-directory`, and falls back to `/gallery-dl` in containers.
+    """
+    root = get_default_download_root()
+
+    try:
+        from . import config
+
+        config.clear()
+        config.load()
+        base_directory = config.get(["extractor", "base-directory"])
+
+        # Support both current and legacy gallery-dl config styles.
+        if not isinstance(base_directory, str) or not base_directory.strip():
+            base_directory = config.get(["base-directory"])
+
+        if isinstance(base_directory, str) and base_directory.strip():
+            root = utils.normalise_path(base_directory)
+    except SystemExit as e:
+        log.debug("Using fallback download root due to config exit: %s", e)
+    except Exception as e:
+        log.debug("Using fallback download root due to config load error: %s", e)
+
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
+def resolve_relative_path(relative_path: str):
+    """Resolve and validate a path under the downloads root."""
+    root = get_download_root()
+    safe_relative = (relative_path or "").strip().lstrip("/")
+    absolute_path = utils.normalise_path(os.path.join(root, safe_relative))
+
+    try:
+        common_path = os.path.commonpath([root, absolute_path])
+    except ValueError:
+        common_path = ""
+
+    if common_path != root:
+        raise ValueError("Path is outside the downloads root")
+
+    rel_path = os.path.relpath(absolute_path, root)
+    rel_path = "" if rel_path == "." else rel_path
+
+    return root, absolute_path, rel_path
+
+
+def list_download_entries(directory_path: str, root_path: str):
+    """Return directory entries for downloads browser view."""
+    entries: list[dict[str, Any]] = []
+
+    with os.scandir(directory_path) as scandir_entries:
+        for entry in scandir_entries:
+            try:
+                stat = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+
+            entry_path = os.path.relpath(entry.path, root_path)
+
+            entries.append(
+                {
+                    "name": entry.name,
+                    "path": "" if entry_path == "." else entry_path,
+                    "is_dir": entry.is_dir(follow_symlinks=False),
+                    "size": stat.st_size,
+                    "modified": int(stat.st_mtime),
+                }
+            )
+
+    entries.sort(key=lambda item: (not item["is_dir"], item["name"].lower()))
+
+    return entries
+
+
+def create_downloads_archive(root_path: str, archive_path: str):
+    """Create a ZIP archive containing all files in the downloads root."""
+    archived_files = 0
+
+    with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for current_root, _, files in os.walk(root_path):
+            for filename in files:
+                file_path = os.path.join(current_root, filename)
+                if os.path.islink(file_path):
+                    continue
+
+                arcname = os.path.relpath(file_path, root_path)
+                archive.write(file_path, arcname=arcname)
+
+                archived_files += 1
+
+    return archived_files
+
+
+def remove_directory(path: str):
+    """Best-effort cleanup for temporary directories."""
+    shutil.rmtree(path, ignore_errors=True)
+
+
+async def downloads_list(request: Request):
+    """Return filebrowser-style directory listing for downloads."""
+    relative_path = request.query_params.get("path", "")
+
+    try:
+        root_path, absolute_path, rel_path = resolve_relative_path(relative_path)
+    except ValueError as e:
+        return JSONResponse(
+            {
+                "success": False,
+                "error": str(e),
+            },
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    if not os.path.exists(absolute_path):
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "Path does not exist",
+            },
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    if not os.path.isdir(absolute_path):
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "Path is not a directory",
+            },
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    parent_path = ""
+    if rel_path:
+        parent_path = os.path.dirname(rel_path)
+
+    return JSONResponse(
+        {
+            "success": True,
+            "root": root_path,
+            "path": rel_path,
+            "parent": parent_path,
+            "entries": list_download_entries(absolute_path, root_path),
+        },
+        status_code=HTTP_200_OK,
+    )
+
+
+async def downloads_content(request: Request):
+    """Serve a downloaded file for browser viewing."""
+    relative_path = request.query_params.get("path", "")
+
+    try:
+        _, absolute_path, _ = resolve_relative_path(relative_path)
+    except ValueError as e:
+        return JSONResponse(
+            {
+                "success": False,
+                "error": str(e),
+            },
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    if not os.path.isfile(absolute_path):
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "File not found",
+            },
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    media_type, _ = mimetypes.guess_type(absolute_path)
+
+    return FileResponse(absolute_path, media_type=media_type or "application/octet-stream")
+
+
+async def downloads_file(request: Request):
+    """Serve a downloaded file as an attachment."""
+    relative_path = request.query_params.get("path", "")
+
+    try:
+        _, absolute_path, _ = resolve_relative_path(relative_path)
+    except ValueError as e:
+        return JSONResponse(
+            {
+                "success": False,
+                "error": str(e),
+            },
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    if not os.path.isfile(absolute_path):
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "File not found",
+            },
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    return FileResponse(
+        absolute_path,
+        media_type="application/octet-stream",
+        filename=os.path.basename(absolute_path),
+    )
+
+
+async def downloads_archive(request: Request):
+    """Create a ZIP archive from current downloads and return it."""
+    root_path = get_download_root()
+
+    if not os.path.isdir(root_path):
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "Downloads directory not found",
+            },
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    temp_dir = tempfile.mkdtemp(prefix="gallery-dl-server-")
+    archive_name = f"gallery-dl-downloads-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    archive_path = os.path.join(temp_dir, archive_name)
+
+    try:
+        archived_files = await asyncio.to_thread(create_downloads_archive, root_path, archive_path)
+
+        if archived_files == 0:
+            remove_directory(temp_dir)
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": "No downloaded files available to archive",
+                },
+                status_code=HTTP_404_NOT_FOUND,
+            )
+
+        return FileResponse(
+            archive_path,
+            media_type="application/zip",
+            filename=archive_name,
+            background=BackgroundTask(remove_directory, temp_dir),
+        )
+    except Exception as e:
+        remove_directory(temp_dir)
+        log.error("Failed to create downloads archive: %s", e)
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "Failed to create archive",
+            },
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 
 def download_task(url: str, request_options: dict[str, str]):
@@ -400,6 +670,10 @@ routes = [
     Route("/", endpoint=redirect, methods=["GET"]),
     Route("/gallery-dl", endpoint=homepage, methods=["GET"]),
     Route("/gallery-dl/q", endpoint=submit_form, methods=["POST"]),
+    Route("/gallery-dl/files", endpoint=downloads_list, methods=["GET"]),
+    Route("/gallery-dl/files/content", endpoint=downloads_content, methods=["GET"]),
+    Route("/gallery-dl/files/download", endpoint=downloads_file, methods=["GET"]),
+    Route("/gallery-dl/files/archive", endpoint=downloads_archive, methods=["GET"]),
     Route("/gallery-dl/logs", endpoint=log_route, methods=["GET"]),
     Route("/gallery-dl/logs/clear", endpoint=clear_logs, methods=["POST"]),
     Route("/stream/logs", endpoint=log_stream, methods=["GET"]),
