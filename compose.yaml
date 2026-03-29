@@ -1,5 +1,4 @@
 name: gallery-dl-server
-
 services:
   gallery-dl:
     build:
@@ -7,8 +6,8 @@ services:
       dockerfile: Dockerfile
     image: gallery-dl-server:local
     container_name: gallery-dl-server-local
-    ports:
-      - "9080:9080"
+    expose:
+      - "9080"
     environment:
       CONTAINER_PORT: "9080"
       UID: "1000"
@@ -16,16 +15,15 @@ services:
       UMASK: "022"
       TZ: "UTC"
     volumes:
-      # Keep config as a host bind mount so edits apply immediately.
       - type: bind
-        source: /home/jackson/.config/gallery-dl  
+        source: /home/jackson/.config/gallery-dl
         target: /config
-      # Preferred output path used by default gallery-dl-server config.
       - type: bind
-        source: ./docker/downloads
+        source: /home/jackson/gdlserver
         target: /gallery-dl
-      # Compatibility path for configs using "base-directory": "~/Media/gallery-dl".
       - type: bind
-        source: ./docker/downloads
+        source: /home/jackson/Downloads/gdlserver
         target: /usr/src/app/Media/gallery-dl
+    labels:
+      proxy.aliases: gdl.jickman.cc
     restart: unless-stopped

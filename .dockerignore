@@ -58,3 +58,5 @@ MANIFEST.in
 # Config
 docs/config.*
 pyproject.toml
+
+docker
