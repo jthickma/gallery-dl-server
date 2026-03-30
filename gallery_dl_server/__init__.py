@@ -28,6 +28,7 @@ def run(
     log_level: str = "info",
     server_log_level: str = "info",
     access_log: bool = False,
+    cors_allow_origins: str | list[str] = "*",
 ) -> None:
     """
     Run gallery-dl-server with custom options.
@@ -50,6 +51,9 @@ def run(
 
         access_log (bool): Enable or disable the access log only, without changing the log level
             (i.e. show `GET` requests, WebSocket connections, etc.).
+
+        cors_allow_origins (str | list[str]): CORS allow origins, either '*' or a list of origins
+            (comma-separated string supported).
 
     Raises:
         TypeError: If an invalid parameter is passed to the function, it will raise a `TypeError`.
@@ -93,6 +97,7 @@ def run(
         "log_level": log_level.lower(),
         "server_log_level": server_log_level.lower(),
         "access_log": access_log,
+        "cors_allow_origins": options.parse_cors_allow_origins(cors_allow_origins),
     }
 
     try:

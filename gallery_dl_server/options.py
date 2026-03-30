@@ -67,6 +67,13 @@ def parse_args(is_main_module: bool = False):
         help="enable server access logging [true|false] (default: false)",
     )
 
+    parser.add_argument(
+        "--cors-allow-origins",
+        type=str,
+        default=os.environ.get("CORS_ALLOW_ORIGINS", "*"),
+        help="comma-separated list of allowed CORS origins or '*'",
+    )
+
     args = parser.parse_args()
 
     custom_args = validate_args(parser, args)
@@ -82,6 +89,7 @@ def validate_args(parser: ArgumentParser, args: Namespace):
     log_level: str = args.log_level
     server_log_level: str = args.server_log_level
     access_log: str = args.access_log
+    cors_allow_origins_raw: str = args.cors_allow_origins
 
     if port < 0 or port > 65535:
         parser.error("invalid value for --port, must be a valid integer between 0 and 65535")
@@ -102,6 +110,8 @@ def validate_args(parser: ArgumentParser, args: Namespace):
     if access_log.lower() not in ["true", "false"]:
         parser.error("invalid value for --access-log, must be 'true' or 'false'")
 
+    cors_allow_origins = parse_cors_allow_origins(cors_allow_origins_raw)
+
     return CustomNamespace(
         host=host,
         port=port,
@@ -109,6 +119,7 @@ def validate_args(parser: ArgumentParser, args: Namespace):
         log_level=log_level.lower(),
         server_log_level=server_log_level.lower(),
         access_log=access_log.lower() == "true",
+        cors_allow_origins=cors_allow_origins,
     )
 
 
@@ -120,6 +131,9 @@ def get_default_args():
     log_level = os.environ.get("LOG_LEVEL", "info")
     server_log_level = os.environ.get("SERVER_LOG_LEVEL", "info")
     access_log = os.environ.get("ACCESS_LOG", "false")
+    cors_allow_origins_raw = os.environ.get("CORS_ALLOW_ORIGINS", "*")
+
+    cors_allow_origins = parse_cors_allow_origins(cors_allow_origins_raw)
 
     return CustomNamespace(
         host=host,
@@ -128,7 +142,26 @@ def get_default_args():
         log_level=log_level.lower(),
         server_log_level=server_log_level.lower(),
         access_log=access_log.lower() == "true",
+        cors_allow_origins=cors_allow_origins,
     )
+
+
+def parse_cors_allow_origins(value: str | list[str] | None):
+    """Parse allowed CORS origins from string or list input."""
+    if value is None:
+        return ["*"]
+
+    if isinstance(value, (list, tuple, set)):
+        return [origin.strip() for origin in value if isinstance(origin, str) and origin.strip()]
+
+    raw_value = str(value).strip()
+    if raw_value == "*":
+        return ["*"]
+
+    if not raw_value:
+        return []
+
+    return [origin.strip() for origin in raw_value.split(",") if origin.strip()]
 
 
 class CustomNamespace(Namespace):
@@ -142,6 +175,7 @@ class CustomNamespace(Namespace):
         log_level: str,
         server_log_level: str,
         access_log: bool,
+        cors_allow_origins: list[str],
     ):
         super().__init__()
         self.host = host
@@ -150,6 +184,7 @@ class CustomNamespace(Namespace):
         self.log_level = log_level
         self.server_log_level = server_log_level
         self.access_log = access_log
+        self.cors_allow_origins = cors_allow_origins
 
         self._validate_types()
 
@@ -188,5 +223,14 @@ class CustomNamespace(Namespace):
             raise TypeError(
                 "Expected 'access_log' to be of type bool, got {}".format(
                     type(self.access_log).__name__
+                )
+            )
+
+        if not isinstance(self.cors_allow_origins, list) or not all(
+            isinstance(origin, str) for origin in self.cors_allow_origins
+        ):
+            raise TypeError(
+                "Expected 'cors_allow_origins' to be a list of strings, got {}".format(
+                    type(self.cors_allow_origins).__name__
                 )
             )

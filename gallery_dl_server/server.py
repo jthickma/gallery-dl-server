@@ -12,9 +12,11 @@ import time
 import zipfile
 
 from contextlib import asynccontextmanager
+from pathlib import Path, PureWindowsPath
 from multiprocessing.queues import Queue
 from types import FrameType
 from typing import Any
+from urllib.parse import urlparse
 
 import aiofiles
 import watchfiles
@@ -44,12 +46,23 @@ import yt_dlp.version
 from . import download, output, utils, version
 
 custom_args = output.args
+cors_allow_origins = custom_args.cors_allow_origins if custom_args else ["*"]
 
 log_file = output.LOG_FILE
-last_line = ""
-last_position = 0
 
 log = output.initialise_logging(__name__)
+
+
+class ServerState:
+    """Shared server state stored on the app instance."""
+
+    def __init__(self):
+        self.active_connections: set[WebSocket] = set()
+        self.connections_lock = asyncio.Lock()
+        self.shutdown_event = asyncio.Event()
+        self.shutdown_in_progress = False
+        self.last_line = ""
+        self.last_position = 0
 
 
 async def redirect(request: Request):
@@ -72,14 +85,28 @@ async def homepage(request: Request):
 
 async def submit_form(request: Request):
     """Process form submission data and start download in the background."""
-    form_data = await request.form()
+    content_type = request.headers.get("content-type", "")
+    url = None
+    video_opts = None
 
-    keys = ("url", "video-opts")
-    values = tuple(form_data.get(key) for key in keys)
+    if "application/json" in content_type:
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = {}
 
-    url, video_opts = (None if isinstance(value, UploadFile) else value for value in values)
+        if isinstance(payload, dict):
+            url = payload.get("url")
+            video_opts = payload.get("video-opts")
+    else:
+        form_data = await request.form()
 
-    if not url:
+        keys = ("url", "video-opts")
+        values = tuple(form_data.get(key) for key in keys)
+
+        url, video_opts = (None if isinstance(value, UploadFile) else value for value in values)
+
+    if not isinstance(url, str) or not url.strip():
         log.error("No URL provided.")
 
         return JSONResponse(
@@ -89,12 +116,23 @@ async def submit_form(request: Request):
             },
         )
 
+    url = url.strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        log.error("Invalid URL provided: %s", url)
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "Invalid URL provided.",
+            }
+        )
+
     if not video_opts:
         video_opts = "none-selected"
 
     request_options = {"video-options": video_opts}
 
-    task = BackgroundTask(download_task, url.strip(), request_options)
+    task = BackgroundTask(download_task, url, request_options)
 
     log.info("Added URL to the download queue: %s", url)
 
@@ -148,22 +186,24 @@ def get_download_root():
 
 def resolve_relative_path(relative_path: str):
     """Resolve and validate a path under the downloads root."""
-    root = get_download_root()
-    safe_relative = (relative_path or "").strip().lstrip("/")
-    absolute_path = utils.normalise_path(os.path.join(root, safe_relative))
+    root = Path(get_download_root()).resolve()
+    safe_relative = (relative_path or "").strip().lstrip("/\\")
 
-    try:
-        common_path = os.path.commonpath([root, absolute_path])
-    except ValueError:
-        common_path = ""
-
-    if common_path != root:
+    if PureWindowsPath(safe_relative).is_absolute() or Path(safe_relative).is_absolute():
         raise ValueError("Path is outside the downloads root")
 
-    rel_path = os.path.relpath(absolute_path, root)
-    rel_path = "" if rel_path == "." else rel_path
+    try:
+        absolute_path = (root / safe_relative).resolve(strict=False)
+    except (OSError, RuntimeError) as e:
+        raise ValueError("Path is outside the downloads root") from e
 
-    return root, absolute_path, rel_path
+    if not absolute_path.is_relative_to(root):
+        raise ValueError("Path is outside the downloads root")
+
+    rel_path = absolute_path.relative_to(root)
+    rel_path_str = "" if rel_path == Path(".") else str(rel_path)
+
+    return str(root), str(absolute_path), rel_path_str
 
 
 def list_download_entries(directory_path: str, root_path: str):
@@ -446,8 +486,8 @@ async def log_route(request: Request):
 async def clear_logs(request: Request):
     """Clear the log file on request."""
     try:
-        with open(log_file, "w") as file:
-            file.write("")
+        async with aiofiles.open(log_file, "w", encoding="utf-8") as file:
+            await file.write("")
 
         return JSONResponse(
             {
@@ -509,13 +549,12 @@ async def log_stream(request: Request):
 
 async def log_update(websocket: WebSocket):
     """Stream log file updates over WebSocket connection."""
-    global last_line, last_position
-
+    state = websocket.app.state.server_state
     await websocket.accept()
     log.debug(f"Accepted WebSocket connection: {websocket}")
 
-    async with connections_lock:
-        active_connections.add(websocket)
+    async with state.connections_lock:
+        state.active_connections.add(websocket)
         log.debug("WebSocket added to active connections")
     try:
         async with aiofiles.open(log_file, mode="r", encoding="utf-8") as file:
@@ -523,7 +562,7 @@ async def log_update(websocket: WebSocket):
 
             async for changes in watchfiles.awatch(
                 log_file,
-                stop_event=shutdown_event,
+                stop_event=state.shutdown_event,
                 rust_timeout=100,
                 yield_on_timeout=True,
             ):
@@ -531,9 +570,9 @@ async def log_update(websocket: WebSocket):
                 do_update_state = False
 
                 previous_line, position = await asyncio.to_thread(
-                    output.read_previous_line, log_file, last_position
+                    output.read_previous_line, log_file, state.last_position
                 )
-                if "B/s" in previous_line and previous_line != last_line:
+                if "B/s" in previous_line and previous_line != state.last_line:
                     new_content = previous_line
                     do_update_state = True
 
@@ -545,33 +584,33 @@ async def log_update(websocket: WebSocket):
                     await websocket.send_text(new_content)
 
                     if do_update_state:
-                        last_line = previous_line
-                        last_position = position
+                        state.last_line = previous_line
+                        state.last_position = position
                     else:
-                        last_line = ""
-                        last_position = 0
+                        state.last_line = ""
+                        state.last_position = 0
     except asyncio.CancelledError as e:
         log.debug(f"Exception: {type(e).__name__}")
     except WebSocketDisconnect as e:
         log.debug(f"Exception: {type(e).__name__}")
     except Exception as e:
-        log.debug(f"Exception: {type(e).__name__}: {e}")
+        log.error("WebSocket error: %s", e, exc_info=True)
     finally:
-        async with connections_lock:
-            if websocket in active_connections:
-                active_connections.remove(websocket)
-                log.debug("WebSocket removed from active connections")
+        async with state.connections_lock:
+            state.active_connections.discard(websocket)
+            log.debug("WebSocket removed from active connections")
 
 
 @asynccontextmanager
 async def lifespan(app: Starlette):
     """Run server startup and shutdown tasks."""
+    app.state.server_state = ServerState()
     output.configure_default_loggers()
 
     uvicorn_log = output.get_logger("uvicorn")
     uvicorn_log.info(f"Starting {type(app).__name__} application.")
 
-    await shutdown_override()
+    await shutdown_override(app)
     try:
         yield
     except asyncio.CancelledError:
@@ -587,21 +626,21 @@ async def lifespan(app: Starlette):
                 shutil.copy2(log_file, dst)
 
 
-async def shutdown_override():
+async def shutdown_override(app: Starlette):
     """Override uvicorn signal handlers to ensure a graceful shutdown."""
     sigint_handler = signal.getsignal(signal.SIGINT)
     sigterm_handler = signal.getsignal(signal.SIGTERM)
 
     def shutdown(sig: int, frame: FrameType | None = None):
         """Call shutdown handler and then original handler as a callback."""
-        global shutdown_in_progress
-        if shutdown_in_progress:
+        state = app.state.server_state
+        if state.shutdown_in_progress:
             return
 
-        shutdown_in_progress = True
+        state.shutdown_in_progress = True
 
         event_loop = asyncio.get_event_loop()
-        future = asyncio.run_coroutine_threadsafe(shutdown_handler(), event_loop)
+        future = asyncio.run_coroutine_threadsafe(shutdown_handler(app), event_loop)
         future.add_done_callback(lambda f: call_original_handler(sig, frame))
 
     def call_original_handler(sig: int, frame: FrameType | None = None):
@@ -615,24 +654,26 @@ async def shutdown_override():
     signal.signal(signal.SIGTERM, shutdown)
 
 
-async def shutdown_handler():
+async def shutdown_handler(app: Starlette):
     """Initiate server shutdown."""
-    if not shutdown_event.is_set():
-        shutdown_event.set()
+    state = app.state.server_state
+    if not state.shutdown_event.is_set():
+        state.shutdown_event.set()
         log.debug("Set shutdown event")
 
-    await close_connections()
+    await close_connections(app)
     output.close_handlers()
 
 
-async def close_connections():
+async def close_connections(app: Starlette):
     """Close WebSocket connections and clear the set of active connections."""
-    async with connections_lock:
-        log.debug(f"Active connections before closing: {len(active_connections)}")
+    state = app.state.server_state
+    async with state.connections_lock:
+        log.debug(f"Active connections before closing: {len(state.active_connections)}")
         log.debug(f"Active tasks before closing: {len(asyncio.all_tasks())}")
 
         close_connections = []
-        for websocket in active_connections:
+        for websocket in state.active_connections:
             if websocket.client_state == WebSocketState.CONNECTED:
                 close_connections.append(websocket.close())
                 log.debug(f"Scheduled WebSocket for closure: {websocket}")
@@ -641,8 +682,8 @@ async def close_connections():
             await asyncio.gather(*close_connections)
             log.debug("Closed all WebSocket connections")
 
-        if active_connections:
-            active_connections.clear()
+        if state.active_connections:
+            state.active_connections.clear()
             log.debug("Cleared active connections")
 
 
@@ -660,11 +701,6 @@ class CSPMiddleware(BaseHTTPMiddleware):
 
 
 templates = Jinja2Templates(directory=utils.resource_path("templates"))
-
-active_connections: set[WebSocket] = set()
-connections_lock = asyncio.Lock()
-shutdown_event = asyncio.Event()
-shutdown_in_progress = False
 
 routes = [
     Route("/", endpoint=redirect, methods=["GET"]),
@@ -693,7 +729,7 @@ csp_policy = (
 )
 
 middleware = [
-    Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["POST"]),
+    Middleware(CORSMiddleware, allow_origins=cors_allow_origins, allow_methods=["POST"]),
     Middleware(CSPMiddleware, csp_policy=csp_policy),
 ]
 
