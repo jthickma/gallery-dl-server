@@ -11,7 +11,7 @@ function disableDarkMode() {
   darkModeToggle.innerHTML = `<i class="bi bi-moon-fill"></i>`;
 }
 
-if (localStorage.getItem("theme") === "dark") {
+if (localStorage.getItem("theme") !== "light") {
   enableDarkMode();
 }
 

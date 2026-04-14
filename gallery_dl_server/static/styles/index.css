@@ -1,5 +1,6 @@
 html, body {
-  background-color: #4a045a;
+  background: radial-gradient(ellipse at top, #3a0347 0%, #1a0220 100%) fixed;
+  min-height: 100vh;
 }
 
 h1, a {

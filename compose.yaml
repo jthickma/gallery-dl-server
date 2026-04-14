@@ -1,29 +1,20 @@
 name: gallery-dl-server
 services:
   gallery-dl:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: gallery-dl-server:local
-    container_name: gallery-dl-server-local
+    image: ghcr.io/jthickma/gallery-dl-server:latest
+    container_name: gallery-dl-server
+    pull_policy: always
+    user: "1000:1000"
     expose:
       - "9080"
     environment:
       CONTAINER_PORT: "9080"
-      UID: "1000"
-      GID: "1000"
       UMASK: "022"
       TZ: "UTC"
     volumes:
-      - type: bind
-        source: /home/jackson/.config/gallery-dl
-        target: /config
-      - type: bind
-        source: /home/jackson/gdlserver
-        target: /gallery-dl
-      - type: bind
-        source: /home/jackson/Downloads/gdlserver
-        target: /usr/src/app/Media/gallery-dl
+      - ./data/config:/config
+      - ./data/archive:/gallery-dl
+      - ./data/downloads:/usr/src/app/Media/gallery-dl
     labels:
       proxy.aliases: gdl.jickman.cc
     restart: unless-stopped
