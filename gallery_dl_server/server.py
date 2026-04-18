@@ -7,10 +7,13 @@ import os
 import queue
 import shutil
 import signal
+import struct
 import tempfile
 import time
+import zlib
 import zipfile
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path, PureWindowsPath
 from multiprocessing.queues import Queue
@@ -234,23 +237,137 @@ def list_download_entries(directory_path: str, root_path: str):
     return entries
 
 
+def _read_and_compress(file_path: str, arcname: str):
+    """Read and deflate-compress a file in a worker thread.
+
+    zlib.compress releases the GIL, enabling true parallel compression
+    across threads for the CPU-bound deflation step.
+    """
+    with open(file_path, "rb") as f:
+        raw = f.read()
+
+    cobj = zlib.compressobj(6, zlib.DEFLATED, -15)
+    deflated = cobj.compress(raw) + cobj.flush()
+    crc = zlib.crc32(raw) & 0xFFFFFFFF
+    mtime = time.localtime(os.path.getmtime(file_path))[:6]
+
+    return arcname, len(raw), deflated, crc, mtime
+
+
 def create_downloads_archive(root_path: str, archive_path: str):
-    """Create a ZIP archive containing all files in the downloads root."""
-    archived_files = 0
+    """Create a ZIP archive containing all files in the downloads root.
 
-    with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for current_root, _, files in os.walk(root_path):
-            for filename in files:
-                file_path = os.path.join(current_root, filename)
-                if os.path.islink(file_path):
-                    continue
+    Uses 4 threads to compress files in parallel for better performance.
+    zlib releases the GIL during compression, enabling true parallelism.
+    Pre-compressed raw deflate streams are injected directly into the ZIP.
+    """
+    file_list = []
+    for current_root, _, files in os.walk(root_path):
+        for filename in files:
+            file_path = os.path.join(current_root, filename)
+            if os.path.islink(file_path):
+                continue
+            arcname = os.path.relpath(file_path, root_path)
+            file_list.append((file_path, arcname))
 
-                arcname = os.path.relpath(file_path, root_path)
-                archive.write(file_path, arcname=arcname)
+    if not file_list:
+        with zipfile.ZipFile(archive_path, mode="w"):
+            pass
+        return 0
 
-                archived_files += 1
+    # Compress all files in parallel across 4 threads
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(_read_and_compress, fp, an) for fp, an in file_list]
+        results = [f.result() for f in futures]
 
-    return archived_files
+    # Build ZIP manually — write local file headers + pre-compressed data,
+    # then the central directory. This avoids zipfile re-compressing.
+    _write_zip_from_compressed(archive_path, results)
+
+    return len(results)
+
+
+def _write_zip_from_compressed(archive_path: str, entries):
+    """Write a ZIP file from pre-compressed deflate entries.
+
+    Constructs the binary ZIP structure directly to avoid double-compression.
+    """
+    central_entries = []
+
+    with open(archive_path, "wb") as f:
+        for arcname, file_size, deflated, crc, mtime in entries:
+            encoded_name = arcname.encode("utf-8")
+
+            # DOS date/time from mtime tuple (year, month, day, hour, min, sec)
+            dos_time = (mtime[3] << 11) | (mtime[4] << 5) | (mtime[5] // 2)
+            dos_date = ((mtime[0] - 1980) << 9) | (mtime[1] << 5) | mtime[2]
+
+            offset = f.tell()
+
+            # Local file header
+            local_header = struct.pack(
+                "<4sHHHHHIIIHH",
+                b"PK\x03\x04",      # signature
+                20,                   # version needed (2.0)
+                0x800,                # flags: UTF-8 filenames
+                8,                    # compression: deflated
+                dos_time,
+                dos_date,
+                crc,
+                len(deflated),        # compressed size
+                file_size,            # uncompressed size
+                len(encoded_name),    # filename length
+                0,                    # extra field length
+            )
+            f.write(local_header)
+            f.write(encoded_name)
+            f.write(deflated)
+
+            central_entries.append((encoded_name, dos_time, dos_date, crc,
+                                    len(deflated), file_size, offset))
+
+        # Central directory
+        cd_offset = f.tell()
+        for (encoded_name, dos_time, dos_date, crc,
+             comp_size, uncomp_size, offset) in central_entries:
+            cd_header = struct.pack(
+                "<4sHHHHHHIIIHHHHHII",
+                b"PK\x01\x02",      # signature
+                20,                   # version made by (2.0)
+                20,                   # version needed (2.0)
+                0x800,                # flags: UTF-8
+                8,                    # compression: deflated
+                dos_time,
+                dos_date,
+                crc,
+                comp_size,
+                uncomp_size,
+                len(encoded_name),    # filename length
+                0,                    # extra field length
+                0,                    # file comment length
+                0,                    # disk number start
+                0,                    # internal file attributes
+                (0o644 << 16),        # external file attributes
+                offset,               # local header offset
+            )
+            f.write(cd_header)
+            f.write(encoded_name)
+
+        cd_size = f.tell() - cd_offset
+
+        # End of central directory
+        eocd = struct.pack(
+            "<4sHHHHIIH",
+            b"PK\x05\x06",          # signature
+            0,                        # disk number
+            0,                        # disk with central directory
+            len(central_entries),     # entries on this disk
+            len(central_entries),     # total entries
+            cd_size,                  # central directory size
+            cd_offset,                # central directory offset
+            0,                        # comment length
+        )
+        f.write(eocd)
 
 
 def remove_directory(path: str):
@@ -368,24 +485,48 @@ async def downloads_file(request: Request):
 
 
 async def downloads_archive(request: Request):
-    """Create a ZIP archive from current downloads and return it."""
-    root_path = get_download_root()
+    """Create a ZIP archive from downloads and return it.
 
-    if not os.path.isdir(root_path):
+    Accepts an optional ``path`` query parameter to archive a subfolder.
+    If the path points to a single file, serves it directly without compression.
+    """
+    relative_path = request.query_params.get("path", "")
+
+    try:
+        root_path, target_path, rel_path = resolve_relative_path(relative_path)
+    except ValueError as e:
         return JSONResponse(
-            {
-                "success": False,
-                "error": "Downloads directory not found",
-            },
+            {"success": False, "error": str(e)},
             status_code=HTTP_404_NOT_FOUND,
         )
 
+    if not os.path.exists(target_path):
+        return JSONResponse(
+            {"success": False, "error": "Path does not exist"},
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    # Single file — serve directly without compression
+    if os.path.isfile(target_path):
+        return FileResponse(
+            target_path,
+            media_type="application/octet-stream",
+            filename=os.path.basename(target_path),
+        )
+
+    if not os.path.isdir(target_path):
+        return JSONResponse(
+            {"success": False, "error": "Downloads directory not found"},
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    folder_name = os.path.basename(target_path) or "downloads"
     temp_dir = tempfile.mkdtemp(prefix="gallery-dl-server-")
-    archive_name = f"gallery-dl-downloads-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    archive_name = f"gallery-dl-{folder_name}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     archive_path = os.path.join(temp_dir, archive_name)
 
     try:
-        archived_files = await asyncio.to_thread(create_downloads_archive, root_path, archive_path)
+        archived_files = await asyncio.to_thread(create_downloads_archive, target_path, archive_path)
 
         if archived_files == 0:
             remove_directory(temp_dir)

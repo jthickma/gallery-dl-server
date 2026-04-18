@@ -151,6 +151,93 @@ function pathToParam(path) {
   return encodeURIComponent(path || "");
 }
 
+/* ── Media type detection ── */
+
+const IMAGE_EXTS = new Set([
+  "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "avif", "ico", "jfif"
+]);
+const VIDEO_EXTS = new Set([
+  "mp4", "webm", "mkv", "mov", "avi", "m4v", "ogv"
+]);
+const AUDIO_EXTS = new Set([
+  "mp3", "ogg", "wav", "flac", "aac", "m4a", "opus", "wma"
+]);
+
+function getFileExt(name) {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+}
+
+function getMediaType(name) {
+  const ext = getFileExt(name);
+  if (IMAGE_EXTS.has(ext)) return "image";
+  if (VIDEO_EXTS.has(ext)) return "video";
+  if (AUDIO_EXTS.has(ext)) return "audio";
+  return null;
+}
+
+function getFileIcon(name) {
+  const type = getMediaType(name);
+  if (type === "image") return `<i class="bi bi-file-earmark-image file-icon-image"></i>`;
+  if (type === "video") return `<i class="bi bi-file-earmark-play file-icon-video"></i>`;
+  if (type === "audio") return `<i class="bi bi-file-earmark-music file-icon-audio"></i>`;
+  return `<i class="bi bi-file-earmark"></i>`;
+}
+
+/* ── Media modal ── */
+
+const mediaModal = document.getElementById("media-modal");
+const mediaModalBody = document.getElementById("media-modal-body");
+const mediaModalTitle = document.getElementById("media-modal-title");
+const mediaModalDownload = document.getElementById("media-modal-download");
+const mediaModalClose = document.getElementById("media-modal-close");
+
+function openMediaModal(name, path) {
+  const type = getMediaType(name);
+  const contentUrl = `/gallery-dl/files/content?path=${pathToParam(path)}`;
+  const downloadUrl = `/gallery-dl/files/download?path=${pathToParam(path)}`;
+
+  mediaModalTitle.textContent = name;
+  mediaModalDownload.href = downloadUrl;
+
+  if (type === "image") {
+    mediaModalBody.innerHTML = `<img src="${escapeHtml(contentUrl)}" alt="${escapeHtml(name)}" />`;
+  } else if (type === "video") {
+    mediaModalBody.innerHTML = `<video src="${escapeHtml(contentUrl)}" controls autoplay></video>`;
+  } else if (type === "audio") {
+    mediaModalBody.innerHTML = `<audio src="${escapeHtml(contentUrl)}" controls autoplay></audio>`;
+  } else {
+    return;
+  }
+
+  mediaModal.classList.remove("d-none");
+  document.body.style.overflow = "hidden";
+}
+
+function closeMediaModal() {
+  mediaModal.classList.add("d-none");
+  document.body.style.overflow = "";
+
+  const video = mediaModalBody.querySelector("video");
+  const audio = mediaModalBody.querySelector("audio");
+  if (video) video.pause();
+  if (audio) audio.pause();
+
+  mediaModalBody.innerHTML = "";
+}
+
+mediaModalClose.onclick = closeMediaModal;
+
+mediaModal.querySelector(".media-modal-backdrop").onclick = closeMediaModal;
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !mediaModal.classList.contains("d-none")) {
+    closeMediaModal();
+  }
+});
+
+/* ── Downloads browser ── */
+
 function renderBreadcrumbs(path) {
   const segments = path ? path.split("/").filter(Boolean) : [];
   const crumbs = [
@@ -178,6 +265,10 @@ function renderDownloadsTable(data) {
   currentDownloadsPath = data.path || "";
   downloadsRoot.textContent = `Download root: ${data.root}`;
   renderBreadcrumbs(currentDownloadsPath);
+
+  // Update "Download All as ZIP" link to reflect current folder
+  const downloadAllZip = document.getElementById("download-all-zip");
+  downloadAllZip.href = `/gallery-dl/files/archive?path=${pathToParam(currentDownloadsPath)}`;
 
   const rows = [];
   if (currentDownloadsPath) {
@@ -211,19 +302,34 @@ function renderDownloadsTable(data) {
           <td>Directory</td>
           <td>-</td>
           <td>${formatTimestamp(entry.modified)}</td>
-          <td class="text-end"></td>
+          <td class="text-end text-nowrap">
+            <a class="btn btn-sm btn-custom" href="/gallery-dl/files/archive?path=${pathToParam(entry.path)}" title="Download folder as ZIP"><i class="bi bi-file-earmark-zip"></i></a>
+          </td>
         </tr>
       `);
     } else {
+      const mediaType = getMediaType(entry.name);
+      const icon = getFileIcon(entry.name);
+
+      let nameCell;
+      if (mediaType) {
+        nameCell = `<button class="media-preview-btn" type="button" data-name="${entryName}" data-path="${entryPath}">${icon} ${entryName}</button>`;
+      } else {
+        nameCell = `${icon} ${entryName}`;
+      }
+
+      const previewBtn = mediaType
+        ? `<button class="btn btn-sm btn-custom media-open-btn" type="button" data-name="${entryName}" data-path="${entryPath}" title="Preview"><i class="bi bi-eye"></i></button>`
+        : "";
+
       rows.push(`
         <tr>
-          <td>
-            <i class="bi bi-file-earmark"></i> ${entryName}
-          </td>
+          <td>${nameCell}</td>
           <td>File</td>
           <td>${formatBytes(entry.size)}</td>
           <td>${formatTimestamp(entry.modified)}</td>
           <td class="text-end text-nowrap">
+            ${previewBtn}
             <a class="btn btn-sm btn-custom" target="_blank" rel="noopener noreferrer" href="/gallery-dl/files/content?path=${pathToParam(entry.path)}">Open</a>
             <a class="btn btn-sm btn-custom" href="/gallery-dl/files/download?path=${pathToParam(entry.path)}">Download</a>
           </td>
@@ -245,6 +351,12 @@ function renderDownloadsTable(data) {
   downloadsBody.querySelectorAll(".folder-link").forEach((button) => {
     button.onclick = () => {
       loadDownloads(button.getAttribute("data-path") || "");
+    };
+  });
+
+  downloadsBody.querySelectorAll(".media-preview-btn, .media-open-btn").forEach((button) => {
+    button.onclick = () => {
+      openMediaModal(button.dataset.name, button.dataset.path);
     };
   });
 }
