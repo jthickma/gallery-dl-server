@@ -12,14 +12,7 @@
 
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Kristi&display=swap"
-      crossorigin="anonymous"
-    />
-
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-      integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Kristi&display=swap"
       crossorigin="anonymous"
     />
 
@@ -39,22 +32,9 @@
 
     <link rel="stylesheet" href="/static/styles/common.css?v=0.3.0" />
     <link rel="stylesheet" href="/static/styles/index.css?v=0.3.0" />
-    <link rel="stylesheet" href="/static/styles/index-dark.css?v=0.3.0" id="dark-mode" disabled />
 
     <link rel="icon" href="/static/icons/favicon.ico" type="image/x-icon" />
-
-    <link rel="icon" href="/static/icons/favicon-16x16.png" sizes="16x16" type="image/png" />
-    <link rel="icon" href="/static/icons/favicon-32x32.png" sizes="32x32" type="image/png" />
-
-    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" sizes="180x180" />
-
     <link rel="manifest" href="/static/icons/site.webmanifest" />
-
-    <script
-      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
-      integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
-      crossorigin="anonymous"
-    ></script>
 
     <script
       src="https://cdn.jsdelivr.net/npm/sweetalert2@11.12.1/dist/sweetalert2.min.js"
@@ -63,156 +43,159 @@
     ></script>
   </head>
 
-  <body class="d-flex flex-column h-100 text-center text-white d-none">
-    <header class="container-fluid d-flex justify-content-between align-items-center px-3 py-1">
-      <div id="header-left">
-        <a id="home" class="py-0" href="/gallery-dl">dl&nbsp;</a>
-        <a id="files" class="py-3" href="#downloads-browser">Files</a>
-        <a id="logs" class="py-3" href="/gallery-dl/logs">Logs</a>
-      </div>
+  <body class="preload">
+    <header class="app-header">
+      <div class="app-header-inner">
+        <a class="brand" href="/gallery-dl">
+          <span class="brand-mark">dl</span>
+          <span class="brand-name">gallery-dl-server</span>
+        </a>
 
-      <div id="header-right">
-        <a
-          href="https://github.com/jthickma/gallery-dl-server"
-          target="_blank"
-          rel="noopener noreferrer"
-          >gallery-dl-server</a
-        >
-        v{{ app_version }}</div
-      >
+        <nav class="app-nav">
+          <a class="nav-link active" href="#">Files</a>
+          <a class="nav-link" href="/gallery-dl/logs">Logs</a>
+        </nav>
+
+        <div class="app-header-right">
+          <button id="theme-toggle" class="icon-btn" type="button" title="Toggle theme" aria-label="Toggle theme">
+            <i class="bi bi-moon-fill"></i>
+          </button>
+          <a
+            class="version-link"
+            href="https://github.com/jthickma/gallery-dl-server"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="gallery-dl-server on GitHub"
+            >v{{ app_version }}</a
+          >
+        </div>
+      </div>
     </header>
 
-    <main class="container d-flex flex-column flex-grow-1 p-3 pb-0">
-      <div class="mb-auto"></div>
-
-      <div class="px-3">
-        <h1 class="mb-2 display-4">gallery-dl</h1>
-
-        <p class="mb-3 lead">
-          Enter a URL to download the contents to the server.
-          The URL can be from any supported site listed by
-          <a
-            href="https://github.com/mikf/gallery-dl/blob/master/docs/supportedsites.md"
-            target="_blank"
-            rel="noopener noreferrer"
-            >gallery-dl</a
-          >
-          or
-          <a
-            href="https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md"
-            target="_blank"
-            rel="noopener noreferrer"
-            >yt-dlp</a
-          >.</p
-        >
-
-        <form id="form" class="mb-4">
-          <div class="input-group">
+    <main class="app-main">
+      <section class="submit-bar">
+        <form id="form" class="submit-form" autocomplete="off">
+          <div class="input-field">
+            <i class="bi bi-link-45deg input-icon"></i>
             <input
               name="url"
               type="url"
-              class="form-control"
-              placeholder="URL"
+              placeholder="Paste a gallery-dl or yt-dlp URL..."
               title="Enter URL"
               aria-label="URL"
-              aria-describedby="button-submit"
               autofocus
             />
+          </div>
 
-            <select class="form-select" name="video-opts" title="Select Option">
-              <option value="none-selected" selected>Select Option</option>
-              <optgroup label="Video Options">
-                <option value="download-video">Download Video</option>
-                <option value="extract-audio">Extract Audio</option>
-              </optgroup>
+          <select class="input-select" name="video-opts" title="Download options">
+            <option value="none-selected">Auto</option>
+            <option value="download-video">Video</option>
+            <option value="extract-audio">Audio only</option>
+          </select>
+
+          <button id="button-submit" class="btn-primary" type="submit">
+            <i class="bi bi-cloud-download"></i>
+            <span>Download</span>
+          </button>
+        </form>
+      </section>
+
+      <section id="downloads-browser" class="downloads-panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <i class="bi bi-folder2-open"></i>
+            <h2>Files</h2>
+            <span id="downloads-root" class="panel-subtitle"></span>
+          </div>
+
+          <div class="panel-actions">
+            <div class="segmented" role="tablist" aria-label="View mode">
+              <button id="view-grid" class="segmented-btn active" type="button" title="Grid view" aria-label="Grid view">
+                <i class="bi bi-grid-3x3-gap-fill"></i>
+              </button>
+              <button id="view-list" class="segmented-btn" type="button" title="List view" aria-label="List view">
+                <i class="bi bi-list-ul"></i>
+              </button>
+            </div>
+
+            <select id="sort-select" class="input-select compact" title="Sort">
+              <option value="name-asc">Name A-Z</option>
+              <option value="name-desc">Name Z-A</option>
+              <option value="modified-desc">Newest</option>
+              <option value="modified-asc">Oldest</option>
+              <option value="size-desc">Largest</option>
+              <option value="size-asc">Smallest</option>
             </select>
 
-            <button id="button-submit" class="btn btn-custom" type="submit">Submit</button>
-          </div>
-        </form>
+            <button id="refresh-downloads" class="icon-btn" type="button" title="Refresh" aria-label="Refresh">
+              <i class="bi bi-arrow-clockwise"></i>
+            </button>
 
-        <div id="container-toggle" class="mb-4">
-          <button id="button-logs" class="btn btn-custom">Show Logs</button>
-        </div>
-
-        <div id="container-logs" class="mb-0">
-          <textarea id="box" class="d-none" name="Logs" placeholder="Logs output" readonly></textarea>
-        </div>
-
-        <section id="downloads-browser" class="mt-4 mb-2 text-start">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-            <h2 class="h5 mb-0 me-auto">Downloads</h2>
-            <button id="refresh-downloads" class="btn btn-sm btn-custom" type="button"
-              >Refresh</button
-            >
-            <a id="download-all-zip" class="btn btn-sm btn-custom" href="/gallery-dl/files/archive?path="
-              >Download All as ZIP</
-            >
-          </div>
-
-          <div id="downloads-root" class="small mb-2"></div>
-
-          <nav id="downloads-breadcrumbs" class="mb-2" aria-label="Download path breadcrumbs"></nav>
-
-          <div class="table-responsive">
-            <table class="table table-sm align-middle mb-0" id="downloads-table">
-              <thead>
-                <tr>
-                  <th scope="col">Name</th>
-                  <th scope="col" class="text-nowrap">Type</th>
-                  <th scope="col" class="text-nowrap">Size</th>
-                  <th scope="col" class="text-nowrap">Modified</th>
-                  <th scope="col" class="text-nowrap text-end">Actions</th>
-                </tr>
-              </thead>
-              <tbody id="downloads-body"></tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-
-      <div class="mt-auto"></div>
-    </main>
-
-    <div id="media-modal" class="media-modal d-none" tabindex="-1">
-      <div class="media-modal-backdrop"></div>
-      <div class="media-modal-content">
-        <div class="media-modal-header">
-          <span id="media-modal-title" class="media-modal-title"></span>
-          <div class="media-modal-actions">
-            <a id="media-modal-download" class="btn btn-sm btn-custom" href="#" title="Download">
-              <i class="bi bi-download"></i>
+            <a id="download-all-zip" class="btn-ghost" href="/gallery-dl/files/archive" title="Download everything as ZIP">
+              <i class="bi bi-file-earmark-zip"></i>
+              <span>ZIP</span>
             </a>
-            <button id="media-modal-close" class="btn btn-sm btn-custom" type="button" title="Close">
-              <i class="bi bi-x-lg"></i>
+
+            <button id="toggle-logs" class="btn-ghost" type="button" title="Toggle log panel">
+              <i class="bi bi-terminal"></i>
+              <span>Logs</span>
             </button>
           </div>
         </div>
-        <div id="media-modal-body" class="media-modal-body"></div>
-      </div>
-    </div>
 
-    <footer class="container-fluid d-flex justify-content-center align-items-center p-3">
-      <button class="btn btn-custom invisible"><i class="bi bi-moon-fill"></i></button>
-      <div class="flex-grow-1">
-        Web frontend for
-        <a
-          href="https://github.com/mikf/gallery-dl"
-          target="_blank"
-          rel="noopener noreferrer"
-          >gallery-dl</a
-        >
-        v{{ gallery_dl_version }} with
-        <a
-          href="https://github.com/yt-dlp/yt-dlp"
-          target="_blank"
-          rel="noopener noreferrer"
-          >yt-dlp</a
-        >
-        v{{ yt_dlp_version }}</div
-      >
-      <button id="dark-mode-toggle" class="btn btn-custom"><i class="bi bi-moon-fill"></i></button>
+        <nav id="downloads-breadcrumbs" class="breadcrumbs" aria-label="Path"></nav>
+
+        <div id="downloads-view" class="downloads-view grid-view"></div>
+      </section>
+
+      <section id="container-logs" class="logs-panel hidden">
+        <div class="logs-header">
+          <span><i class="bi bi-terminal"></i> Log stream</span>
+          <button id="close-logs" class="icon-btn" type="button" aria-label="Close logs">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+        <textarea id="box" name="Logs" placeholder="Logs output" readonly></textarea>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span>
+        <a href="https://github.com/mikf/gallery-dl" target="_blank" rel="noopener noreferrer">gallery-dl</a>
+        v{{ gallery_dl_version }}
+        ·
+        <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener noreferrer">yt-dlp</a>
+        v{{ yt_dlp_version }}
+      </span>
     </footer>
+
+    <div id="viewer" class="viewer hidden" role="dialog" aria-modal="true" aria-label="Media viewer">
+      <div class="viewer-topbar">
+        <div id="viewer-title" class="viewer-title"></div>
+        <div class="viewer-tools">
+          <a id="viewer-download" class="icon-btn" href="#" title="Download" aria-label="Download">
+            <i class="bi bi-download"></i>
+          </a>
+          <a id="viewer-open" class="icon-btn" href="#" target="_blank" rel="noopener noreferrer" title="Open in new tab" aria-label="Open in new tab">
+            <i class="bi bi-box-arrow-up-right"></i>
+          </a>
+          <button id="viewer-close" class="icon-btn" type="button" title="Close" aria-label="Close">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+      </div>
+
+      <button id="viewer-prev" class="viewer-nav prev" type="button" aria-label="Previous">
+        <i class="bi bi-chevron-left"></i>
+      </button>
+      <button id="viewer-next" class="viewer-nav next" type="button" aria-label="Next">
+        <i class="bi bi-chevron-right"></i>
+      </button>
+
+      <div id="viewer-stage" class="viewer-stage"></div>
+
+      <div id="viewer-meta" class="viewer-meta"></div>
+    </div>
 
     <script src="/static/scripts/index.js?v=0.3.0"></script>
   </body>

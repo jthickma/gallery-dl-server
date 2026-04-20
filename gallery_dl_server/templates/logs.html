@@ -11,72 +11,73 @@
 
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Kristi&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Kristi&display=swap"
       crossorigin="anonymous"
     />
 
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-      integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+      integrity="sha384-XGjxtQfXaH2tnPFa9x+ruJTuLE3Aa6LhHSWRr1XeTyhezb4abCG4ccI5AkVDxqC+"
       crossorigin="anonymous"
     />
 
-    <link rel="stylesheet" href="/static/styles/common.css?v=0.1.2" />
-    <link rel="stylesheet" href="/static/styles/logs.css?v=0.1.2" />
+    <link rel="stylesheet" href="/static/styles/common.css?v=0.3.0" />
+    <link rel="stylesheet" href="/static/styles/logs.css?v=0.3.0" />
 
     <link rel="icon" href="/static/icons/favicon.ico" type="image/x-icon" />
-
-    <link rel="icon" href="/static/icons/favicon-16x16.png" sizes="16x16" type="image/png" />
-    <link rel="icon" href="/static/icons/favicon-32x32.png" sizes="32x32" type="image/png" />
-
-    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" sizes="180x180" />
-
     <link rel="manifest" href="/static/icons/site.webmanifest" />
-
-    <script
-      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
-      integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
-      crossorigin="anonymous"
-    ></script>
   </head>
 
-  <body class="d-flex flex-column h-100">
-    <header class="container-fluid d-flex justify-content-between align-items-center px-3 py-1">
-      <div id="header-left">
-        <a id="home" class="py-0" href="/gallery-dl">dl&nbsp;</a>
-        <a id="logs" class="py-3" href="/gallery-dl/logs">Logs</a>
-      </div>
+  <body>
+    <header class="app-header">
+      <div class="app-header-inner">
+        <a class="brand" href="/gallery-dl">
+          <span class="brand-mark">dl</span>
+          <span class="brand-name">gallery-dl-server</span>
+        </a>
 
-      <div id="header-right">
-        <a
-          href="https://github.com/qx6ghqkz/gallery-dl-server"
-          target="_blank"
-          rel="noopener noreferrer"
-          >gallery-dl-server</a
-        >
-        v{{ app_version }}</div
-      >
+        <nav class="app-nav">
+          <a class="nav-link" href="/gallery-dl">Files</a>
+          <a class="nav-link active" href="/gallery-dl/logs">Logs</a>
+        </nav>
+
+        <div class="app-header-right">
+          <a
+            class="version-link"
+            href="https://github.com/jthickma/gallery-dl-server"
+            target="_blank"
+            rel="noopener noreferrer"
+            >v{{ app_version }}</a
+          >
+        </div>
+      </div>
     </header>
 
-    <main class="d-flex flex-column h-100 p-3">
-      <div class="container-fluid d-flex justify-content-between align-items-center px-3">
-        <div>
-          <h1 class="display-6">Logs</h1>
+    <main class="app-main">
+      <div class="logs-page">
+        <div class="logs-toolbar">
+          <h1>Logs</h1>
+          <div class="logs-toolbar-actions">
+            <button id="refresh-logs" class="icon-btn" type="button">
+              <i class="bi bi-arrow-clockwise"></i><span>Refresh</span>
+            </button>
+            <button id="clear-logs" class="icon-btn" type="button">
+              <i class="bi bi-trash"></i><span>Clear</span>
+            </button>
+            <a class="icon-btn" href="/stream/logs" target="_blank" rel="noopener noreferrer">
+              <i class="bi bi-file-text"></i><span>Plain</span>
+            </a>
+            <a class="icon-btn" href="/stream/logs" download="gallery-dl-server.log">
+              <i class="bi bi-download"></i><span>Download</span>
+            </a>
+          </div>
         </div>
 
-        <div>
-          <button id="refresh-logs" class="btn btn-custom">Refresh</button>
-          <button id="clear-logs" class="btn btn-custom">Clear logs</button>
-
-          <a class="btn btn-custom" href="/stream/logs">View plain text</a>
-          <a class="btn btn-custom" href="/stream/logs" download="gallery-dl-server.log" >Download</a>
-        </div>
+        <pre id="container-logs">{{ logs }}</pre>
       </div>
-
-      <pre id="container-logs" class="h-100 m-3">{{ logs }}</pre>
     </main>
 
-    <script src="/static/scripts/logs.js?v=0.1.3"></script>
+    <script src="/static/scripts/logs.js?v=0.3.0"></script>
   </body>
 </html>
